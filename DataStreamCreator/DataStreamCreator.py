@@ -1,3 +1,5 @@
+# Version 1 - 2021-11-11
+
 import numpy as np
 import pandas as pd
 import copy
@@ -5,14 +7,15 @@ import os
 import sklearn.utils
 from IndicatorCalculator import IndicatorCalculator, IndicatorCalculationError
 from sklearn.preprocessing import OneHotEncoder
+import talib
 
 import logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-GAIN_FORWARD_LOOK_CNT = 48
-RISE_GAIN_THRESHOLD_PERCENT = 10 
-FALL_GAIN_THRESHOLD_PERCENT = 7.5
+GAIN_FORWARD_LOOK_CNT = 6
+RISE_GAIN_THRESHOLD_PERCENT = 5.0 / 24.0 # ROCP is calculated based on timespan 1, --> / 24.0 normes it to daily
+FALL_GAIN_THRESHOLD_PERCENT = 5.0 / 24.0
 
 SHORTSPAN = 6
 MIDSPAN = 48
@@ -21,7 +24,10 @@ LONGSPAN = 120
 COLUMNS_FOR_BATCH_NORM = ['open', 'v_AD', 'v_OBV', 'volume']
 COLUMNS_FOR_BATCH_NORM_WILDCARD = ['v_ADOSC']
 
-LOOKBACK_CNT = 256
+LOOKBACK_CNT = 128
+
+SMOOTH_CNT = 50
+SMOOTH_CNT2 = 20
 
 #@title XBlockGenerator
 class XBlockGenerator:
@@ -131,7 +137,12 @@ class YGainGenerator:
     self.gainDF.sort_index(inplace = True)
     
     # Pick values
-    self.gainDFValues = copy.deepcopy(self.gainDF.values)
+    #self.gainDFValues = copy.deepcopy(self.gainDF.values)
+    
+    # Calculate direction
+    _, _, self.direction, _ = self.smoothMAandROC(copy.deepcopy(self.gainDF.values).flatten(), SMOOTH_CNT, SMOOTH_CNT2)
+    self.direction = np.nan_to_num(self.direction, nan=0)
+    
     del self.gainDF 
  
   def __next__(self):
@@ -141,6 +152,26 @@ class YGainGenerator:
     assert 0 < custom_slice_size
     return self.__create_block__(custom_slice_size)
 
+  def smoothMAandROC(self, arrayIn, smoothCnt, smoothCnt2 = 0):
+    _meaned = talib.MA(arrayIn.astype(float), timeperiod=smoothCnt)
+
+    _shifted = np.empty(_meaned.shape)
+    _shifted[:] = np.nan
+    _shifted[:-int(smoothCnt/2)] = _meaned[int(smoothCnt/2):]
+
+    # Return nan if all is nan
+    if all(np.isnan(_shifted)):
+      return _shifted, _shifted, _shifted, _shifted
+    
+    _rocp = talib.ROCP(_shifted, timeperiod=1)
+
+    if 1 < smoothCnt2:
+      _rocp2, _rrocp, _, _ = self.smoothMAandROC(_rocp, smoothCnt2)
+    else:
+      _rocp2, _rrocp = np.zeros(_rocp.shape), np.zeros(_rocp.shape)
+
+    return _shifted, _rocp, _rocp2, _rrocp
+
   def __create_block__(self, custom_slice_size = None):
     gain_float = []
     if custom_slice_size is None:
@@ -149,37 +180,17 @@ class YGainGenerator:
       _local_slice_size = custom_slice_size
 
     # Raise StopIteration if table is consumed
-    if self.slice_start_cnt >= self.gainDFValues.shape[0]:
+    if self.slice_start_cnt >= self.direction.shape[0]:
       logging.info("Stop Iteration in Line 143 - Table consumed in y gen")
       raise StopIteration
 
-    for self.i in range(self.slice_start_cnt, self.gainDFValues.shape[0]):
-      _g = 0
+    for self.i in range(self.slice_start_cnt, self.direction.shape[0]):
       i = self.i
-
-      # Todo: Change from DF to array to improve speed
-
-      if i + GAIN_FORWARD_LOOK_CNT < self.gainDFValues.shape[0]:
-        #tsc = self.gainDF.index[i]
-        #tsf = self.gainDF.index[i + GAIN_FORWARD_LOOK_CNT]
-        cv = self.gainDFValues[i][0] #self.gainDF.loc[tsc,'open']
-        fv_max = np.max(self.gainDFValues[i+1:i + GAIN_FORWARD_LOOK_CNT]) #self.gainDF.loc[tsf,'open']
-        fv_min = np.min(self.gainDFValues[i+1:i + GAIN_FORWARD_LOOK_CNT])     
-        
-        if 0 != cv:
-          _g_fall = (fv_min/cv) - 1.0
-          _g_rise = (fv_max/cv) - 1.0
-          
-          if np.abs(_g_fall) < np.abs(_g_rise): #Rising
-            _g = _g_rise
-          else:
-            _g = _g_fall
-          
-          #_g = (fv/cv) - 1.0
-        else:
-          logging.warning("0 == cv at i="+str(i))
-        
-      gain_float.append(_g)
+      
+      if (i+GAIN_FORWARD_LOOK_CNT < self.direction.shape[0]):
+        gain_float.append(self.direction[i+GAIN_FORWARD_LOOK_CNT])
+      else:
+        gain_float.append(0.0)
 
       if len(gain_float) == _local_slice_size:
         break
