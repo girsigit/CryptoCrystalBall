@@ -55,8 +55,8 @@ logger.setLevel(logging.INFO)
 # Import custom modules
 import sys
 
-sys.path.insert(0, "../IndicatorCalculator")
-sys.path.insert(0, "../DataStreamCreator")
+sys.path.insert(0, "../../IndicatorCalculator")
+sys.path.insert(0, "../../DataStreamCreator")
 
 from IndicatorCalculator import IndicatorCalculator, IndicatorCalculationError
 import DataStreamCreator as dg
@@ -65,7 +65,7 @@ import DataStreamCreator as dg
 # In[ ]:
 
 # Load the environment variables
-load_dotenv("../.env")
+load_dotenv("../../.env")
 
 # In[ ]:
 
@@ -310,9 +310,9 @@ logging.info("len(ms): " + str(len(ms)))
 logging.info(datetime.now())
 
 for m in suitable_markets:
-    print("\n" + m)
     startTime = datetime.utcnow().timestamp()
     try:
+        logging.info(m)
         ticks = GetTicks(m)
         tickDF = pd.DataFrame(ticks)
         tickDF.set_index("startsAt", inplace = True)
@@ -337,11 +337,11 @@ for m in suitable_markets:
             continue
 
         try:
-            r = requests.post(PREDICTOR_REST_SERVICE_URL, json = X.tolist())            
+            r = requests.post(PREDICTOR_REST_SERVICE_URL + "/predict", json = X.tolist())            
         except requests.exceptions.ConnectionError as cex:
-                logging.error("Connection Error to predictor", cex)
-                # Todo: Send error message via telegram
-                break
+            logging.error("Connection Error to predictor", cex)
+            # Todo: Send error message via telegram
+            break
         
         if 200 != r.status_code:
             logging.error("200 != r.status_code, it is " + str(r.status_code))

@@ -1,0 +1,1 @@
+5 * * * * root /usr/local/bin/python3 /home/scripts/SignalGenerator.py > /home/cronlogs/log/`date +\%Y\%m\%d\%H\%M\%S`.log 2>&1

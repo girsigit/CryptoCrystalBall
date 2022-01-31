@@ -2,7 +2,7 @@
 .env
 
 # TA-Lib extracted
-talib/ta-lib
+ta-lib
 
 # Model file
 model.h5
