@@ -1,3 +1,12 @@
+# env file
+.env
+
+# TA-Lib extracted
+talib/ta-lib
+
+# Model file
+model.h5
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

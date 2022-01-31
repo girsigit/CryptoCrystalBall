@@ -13,19 +13,21 @@ import logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-RISE_GAIN_THRESHOLD = 0.0008 #0.0016
-FALL_GAIN_THRESHOLD = -0.0008 #0.000625
-
-FUTURE_LOOKAHEAD_CNT = 24
+GAIN_FORWARD_LOOK_CNT = 6
+RISE_GAIN_THRESHOLD_PERCENT = 2.0 / 24.0 # ROCP is calculated based on timespan 1, --> / 24.0 normes it to daily
+FALL_GAIN_THRESHOLD_PERCENT = 2.0 / 24.0
 
 SHORTSPAN = 6
 MIDSPAN = 48
 LONGSPAN = 120
 
-COLUMNS_FOR_BATCH_NORM = ['open', 'v_AD', 'v_OBV', 'volume'] 
+COLUMNS_FOR_BATCH_NORM = ['open', 'v_AD', 'v_OBV', 'volume']
 COLUMNS_FOR_BATCH_NORM_WILDCARD = ['v_ADOSC']
 
 LOOKBACK_CNT = 256
+
+SMOOTH_CNT = 100 #50
+SMOOTH_CNT2 = 40 #20
 
 #@title XBlockGenerator
 class XBlockGenerator:
@@ -79,7 +81,6 @@ class XBlockGenerator:
     if self.slice_start_cnt >= self.inDFValues.shape[0]:
       logging.info("Stop Iteration in Line 74 - Table consumed in X Gen")
       raise StopIteration
-      
 
     data_X = np.empty((_local_slice_size, LOOKBACK_CNT, self.inDFValues.shape[1]))
     data_X[:] = np.nan
@@ -124,14 +125,12 @@ class XBlockGenerator:
 
 #@title YGainGenerator
 class YGainGenerator:
-  def __init__(self, inDF, slice_size, rise_threshold, fall_threshold, smooth_cnt, smooth_cnt2):
+  def __init__(self, inDF, slice_size, rise_gain_threshold_percent, fall_gain_threshold_percent):
     self.gainDF = copy.deepcopy(pd.DataFrame(inDF.loc[:,'open']))
     self.slice_size = slice_size
     self.slice_start_cnt = LOOKBACK_CNT
-    #self.rise_gain_threshold_factor = rise_gain_threshold_percent / 100.0
-    #self.fall_gain_threshold_factor = fall_gain_threshold_percent / 100.0
-    self.rise_threshold = rise_threshold
-    self.fall_threshold = fall_threshold
+    self.rise_gain_threshold_factor = rise_gain_threshold_percent / 100.0
+    self.fall_gain_threshold_factor = fall_gain_threshold_percent / 100.0
     self.i = 0
     
     # Sort the table
@@ -141,19 +140,9 @@ class YGainGenerator:
     #self.gainDFValues = copy.deepcopy(self.gainDF.values)
     
     # Calculate direction
-    _, _, _direction, _directiondev2nd = self.smoothMAandROC(copy.deepcopy(self.gainDF.values).flatten(), smooth_cnt, smooth_cnt2)
-    _direction = np.nan_to_num(_direction, nan=0)
-    _directiondev2nd = np.nan_to_num(_directiondev2nd, nan=0)
-    # logging.info("Quantiles of direction: q25={}; q75={}".format(np.quantile(np.abs(self.direction), 0.25), np.quantile(np.abs(self.direction), 0.75)))
-    
-    # Shift dir and 2nd array
-    self.direction = np.zeros(_direction.shape)
-    self.direction[:-FUTURE_LOOKAHEAD_CNT] = _direction[FUTURE_LOOKAHEAD_CNT:]
+    _, _, self.direction, _ = self.smoothMAandROC(copy.deepcopy(self.gainDF.values).flatten(), SMOOTH_CNT, SMOOTH_CNT2)
     self.direction = np.nan_to_num(self.direction, nan=0)
-    
-    self.directiondev2nd = np.zeros(_directiondev2nd.shape)
-    self.directiondev2nd[:-FUTURE_LOOKAHEAD_CNT] = _directiondev2nd[FUTURE_LOOKAHEAD_CNT:]
-    self.directiondev2nd = np.nan_to_num(self.directiondev2nd, nan=0)
+    # logging.info("Quantiles of direction: q25={}; q75={}".format(np.quantile(np.abs(self.direction), 0.25), np.quantile(np.abs(self.direction), 0.75)))
     
     del self.gainDF 
  
@@ -195,33 +184,30 @@ class YGainGenerator:
     if self.slice_start_cnt >= self.direction.shape[0]:
       logging.info("Stop Iteration in Line 143 - Table consumed in y gen")
       raise StopIteration
-    
-    _dir_slice = self.direction[self.slice_start_cnt : min([self.direction.shape[0], self.slice_start_cnt+_local_slice_size]) ]
-    _dir2nddev_slice = self.directiondev2nd[self.slice_start_cnt : min([self.directiondev2nd.shape[0], self.slice_start_cnt+_local_slice_size]) ]
-    
-    # Find rise and fall
-    _falling = _dir_slice < self.fall_threshold
-    _rising = (_dir_slice > self.rise_threshold) & (_dir2nddev_slice > 0) & (False == _falling)
-    
-    # Convert into numerical
-    _falling = (_falling * -1)
-    _rising = (_rising * 1)
-    
-    gainCat = _falling + _rising
-    
-    dir_float = np.empty((_dir_slice.shape[0],2))
-    dir_float[:,0] = np.tanh(_dir_slice * 1000.0)
-    dir_float[:,1] = np.tanh(_dir2nddev_slice)
-    
-    #logging.info("_dir_slice min max: " + str((np.min(_dir_slice), np.max(_dir_slice))))
 
-    self.slice_start_cnt += _local_slice_size
+    for self.i in range(self.slice_start_cnt, self.direction.shape[0]):
+      i = self.i
+      
+      if (i+GAIN_FORWARD_LOOK_CNT < self.direction.shape[0]):
+        gain_float.append(self.direction[i+GAIN_FORWARD_LOOK_CNT])
+      else:
+        gain_float.append(0.0)
 
-    return gainCat, dir_float
+      if len(gain_float) == _local_slice_size:
+        break
+
+    gain_float = np.array(gain_float)
+    gainCat = np.zeros(gain_float.shape).astype(int)
+    gainCat[gain_float < -self.fall_gain_threshold_factor] = -1
+    gainCat[gain_float > self.rise_gain_threshold_factor] = 1
+
+    self.slice_start_cnt = self.i + 1
+
+    return gainCat, gain_float
 
 #@title class FileListToDataStream
 class FileListToDataStream:
-  def __init__(self, fileList, batch_size, base_path, smooth_cnt, smooth_cnt2, parallel_generators = 4, shuffle = True, random_seed=42):
+  def __init__(self, fileList, batch_size, base_path, parallel_generators = 4, shuffle = True, random_seed=42):
     assert batch_size % parallel_generators == 0 # Todo: Provide next suitable batch sizes
     self.batch_size = batch_size
     self.gen_batch_size = int(batch_size / parallel_generators)
@@ -229,8 +215,6 @@ class FileListToDataStream:
     self.base_path = base_path
     self.shuffle = shuffle
     self.random_seed = random_seed
-    self.smooth_cnt = smooth_cnt
-    self.smooth_cnt2 = smooth_cnt2
 
     #self.file_lists = []
     self.X_generators = []
@@ -284,120 +268,98 @@ class FileListToDataStream:
     _normedDF = self.ic.NormPriceRelated(_indDF)
 
     _xg = XBlockGenerator(_normedDF, generator_batch_size)
-    _yg = YGainGenerator(_normedDF, generator_batch_size, RISE_GAIN_THRESHOLD, FALL_GAIN_THRESHOLD, self.smooth_cnt, self.smooth_cnt2)
+    _yg = YGainGenerator(_normedDF, generator_batch_size, RISE_GAIN_THRESHOLD_PERCENT, FALL_GAIN_THRESHOLD_PERCENT)
 
     return _xg, _yg
 
   def __next__(self):
-    y_type = 1 # 0 for categorical, 1 for float
-    
-    _shape_invalid = True
+    _X_data = None
+    _y_data = None
 
-    while _shape_invalid:
-        _X_data = None
-        _y_data = None
-        for i in range(self.parallel_generators):
+    y_type = 0 # 0 for categorical, 1 for float 
+
+    for i in range(self.parallel_generators):
+      try:
+        _X = next(self.X_generators[i])
+        _y = next(self.y_generators[i])[y_type]
+      except StopIteration: # If the generator stop internally
+        # Check if the file list is empty
+        if 0 == len(self.fileList):
+          logging.info("Stop Iteration in Line 256 - 0 == len(self.fileList)")
+          raise StopIteration
+        
+        for retry in range(10+1):
+          _fn = self.fileList.pop()
+          logging.info("File " + str(_fn) + " loaded")
+          logging.info("Files left: " + str(len(self.fileList)))
+          self.X_generators[i], self.y_generators[i] = self.__initGenerators__(_fn, self.gen_batch_size)
           try:
             _X = next(self.X_generators[i])
             _y = next(self.y_generators[i])[y_type]
-          except StopIteration: # If the generator stop internally
-            # Check if the file list is empty
-            if 0 == len(self.fileList):
-              logging.info("Stop Iteration in Line 256 - 0 == len(self.fileList)")
-              raise StopIteration
-            
-            for retry in range(10+1):
-              _fn = self.fileList.pop()
-              logging.info("File " + str(_fn) + " loaded")
-              logging.info("Files left: " + str(len(self.fileList)))
-              self.X_generators[i], self.y_generators[i] = self.__initGenerators__(_fn, self.gen_batch_size)
-              try:
-                _X = next(self.X_generators[i])
-                _y = next(self.y_generators[i])[y_type]
-                
-                break
-              except StopIteration:
-                logging.warning("Stop Iteration in Line 267 on getting new generators, retry " + str(retry))
-                if 10 == retry:
-                  raise Exception("10 == retry on getting new generators")
-          
-          _fn = "I am inited"
-          # Check if the generator is fully consumed
-          if _X.shape[0] != self.gen_batch_size:
-            # Check if the file list is empty
-            if 0 == len(self.fileList):
-              logging.info("Stop Iteration in Line 269 - 0 == len(self.fileList)")
-              raise StopIteration
-            
-            _fn = self.fileList.pop()
-            logging.info("File " + str(_fn) + " loaded")
-            logging.info("Files left: " + str(len(self.fileList)))
-            self.X_generators[i], self.y_generators[i] = self.__initGenerators__(_fn, self.gen_batch_size)
-
-            # Fill up the missing elements from the new file
-            try:
-              _missing_cnt = self.gen_batch_size - _X.shape[0]
-              _missing_X = self.X_generators[i].getCustomSizedSlice(_missing_cnt)
-              _missing_y = self.y_generators[i].getCustomSizedSlice(_missing_cnt)[y_type]
-              
-              _X = np.concatenate((_X, _missing_X))
-              _y = np.concatenate((_y, _missing_y))
-            except StopIteration:
-              logging.warning("Caught StopIteration in filling missing values for " + str(_fn))
-              # Check if the file list is empty
-              if 0 == len(self.fileList):
-                logging.info("Stop Iteration in Line 295 - 0 == len(self.fileList)")
-                raise StopIteration
-              
-              _fn = self.fileList.pop()
-              logging.info("File " + str(_fn) + " loaded")
-              logging.info("Files left: " + str(len(self.fileList)))
-              self.X_generators[i], self.y_generators[i] = self.__initGenerators__(_fn, self.gen_batch_size)
-              
-              _X = next(self.X_generators[i])
-              _y = next(self.y_generators[i])[y_type]
-          
-          if 0 == y_type:
-            assert 1 == len(_y.shape)
-          elif 1 == y_type:
-            assert 2 == len(_y.shape)
-          
-          # Todo: Workaround to fix if shape is not (xx,1), finally check why this happens
-          #if 2 != len(_y.shape):
-          #  _y = _y.reshape((-1,1))
-
-          assert _X.shape[0] == _y.shape[0]
-
-          if _X_data is None:
-            _X_data = _X
-            _y_data = _y
-          else:
-            _X_data = np.concatenate((_X_data, _X))
-            _y_data = np.concatenate((_y_data, _y))
-
-        # Try again if size is wrong
-        if self.batch_size != _X_data.shape[0]:
-          logging.warning("\nself.batch_size != _X_data.shape[0]")
-          logging.warning("self.batch_size: " + str(self.batch_size))
-          logging.warning("_X_data.shape[0]: " + str(_X_data.shape[0]))
-          logging.warning("_X_data.shape: " + str(_X_data.shape))
-          continue
-        else:
-            _shape_invalid = False
+            break
+          except StopIteration:
+            logging.warning("Stop Iteration in Line 267 on getting new generators, retry " + str(retry))
+            if 10 == retry:
+              raise Exception("10 == retry on getting new generators")
         
-        if self.shuffle:
-          _X_data, _y_data = sklearn.utils.shuffle(_X_data, _y_data, random_state=self.random_seed)
+      # Check if the generator is fully consumed
+      if _X.shape[0] != self.gen_batch_size:
+        # Check if the file list is empty
+        if 0 == len(self.fileList):
+          logging.info("Stop Iteration in Line 269 - 0 == len(self.fileList)")
+          raise StopIteration
+        
+        _fn = self.fileList.pop()
+        logging.info("File " + str(_fn) + " loaded")
+        logging.info("Files left: " + str(len(self.fileList)))
+        self.X_generators[i], self.y_generators[i] = self.__initGenerators__(_fn, self.gen_batch_size)
 
-        if 0 == y_type:
-          _integer_encoded = _y_data.reshape(len(_y_data), 1)
-          _y_data = self.onehot_encoder.transform(_integer_encoded).astype(int)
+        # Fill up the missing elements from the new file
+        try:
+          _missing_cnt = self.gen_batch_size - _X.shape[0]
+          _missing_X = self.X_generators[i].getCustomSizedSlice(_missing_cnt)
+          _missing_y = self.y_generators[i].getCustomSizedSlice(_missing_cnt)[y_type]
+          
+          _X = np.concatenate((_X, _missing_X))
+          _y = np.concatenate((_y, _missing_y))
+        except StopIteration:
+          logging.warning("Caught StopIteration in filling missing values for " + str(_fn))
+          # Check if the file list is empty
+          if 0 == len(self.fileList):
+            logging.info("Stop Iteration in Line 295 - 0 == len(self.fileList)")
+            raise StopIteration
+          
+          _fn = self.fileList.pop()
+          logging.info("File " + str(_fn) + " loaded")
+          logging.info("Files left: " + str(len(self.fileList)))
+          self.X_generators[i], self.y_generators[i] = self.__initGenerators__(_fn, self.gen_batch_size)
+          
+          _X = next(self.X_generators[i])
+          _y = next(self.y_generators[i])[y_type]
+      
+      assert 1 == len(_y.shape)      
+      # Todo: Workaround to fix if shape is not (xx,1), finally check why this happens
+      #if 2 != len(_y.shape):
+      #  _y = _y.reshape((-1,1))
+
+      assert _X.shape[0] == _y.shape[0]
+
+      if _X_data is None:
+        _X_data = _X
+        _y_data = _y
+      else:
+        _X_data = np.concatenate((_X_data, _X))
+        _y_data = np.concatenate((_y_data, _y))
 
     # End if everything is consumed
     if self.batch_size != _X_data.shape[0]:
-      logging.info("Stop Iteration in Line 376 - self.batch_size != _X_data.shape[0]")
-      logging.info("self.batch_size: " + str(self.batch_size))
-      logging.info("_X_data.shape[0]: " + str(_X_data.shape[0]))
-      logging.info("_X_data.shape: " + str(_X_data.shape))
+      logging.info("Stop Iteration in Line 297 - self.batch_size != _X_data.shape[0]")
       raise StopIteration
+
+    if self.shuffle:
+      _X_data, _y_data = sklearn.utils.shuffle(_X_data, _y_data, random_state=self.random_seed)
+
+    _integer_encoded = _y_data.reshape(len(_y_data), 1)
+    _y_data = self.onehot_encoder.transform(_integer_encoded).astype(int)
 
     return _X_data, _y_data
