@@ -1,4 +1,5 @@
 import os
+import subprocess
 
 from flask import Flask
 from flask import request
@@ -93,6 +94,20 @@ def create_app(test_config=None):
         os.makedirs(app.instance_path)
     except OSError:
         pass
+
+    # Route to check if the server is alive and ready
+    @app.route('/alive', methods=['GET'])
+    def returnAlive():
+        response = app.response_class(
+            status=200,
+            mimetype='application/json'
+        )
+        return response
+
+    # Route to suspend the server
+    @app.route('/suspend', methods=['GET'])
+    def suspendServer(): 
+        os.system("pm-suspend")
 
     # Predict from X-Blocks
     @app.route('/predict', methods=['POST'])
