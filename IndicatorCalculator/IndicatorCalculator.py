@@ -1,3 +1,5 @@
+# Version 1.1 - 2022-02-07
+# - Some Parameters moved to constructor
 # Version 1 - 2021-11-11
 
 import copy
@@ -14,15 +16,16 @@ class IndicatorCalculationError(Exception):
     super().__init__(message)
 
 class IndicatorCalculator():
-  def __init__(self): # Todo: Add kwargs for parameters
+  # Todo: Remove unused block generators and GAIN_FORWARD_LOOK_CNT, ...
+  def __init__(self, shortspan, midspan, longspan, verbose = False): 
     
     self.GAIN_FORWARD_LOOK_CNT = 24
     self.GAIN_THRESHOLD = 0.66
     self.GAIN_THRESHOLD_PERCENT = 10 # eliminates GAIN_THRESHOLD
 
-    self.SHORTSPAN = 6
-    self.MIDSPAN = 48
-    self.LONGSPAN = 120
+    self.SHORTSPAN = shortspan
+    self.MIDSPAN = midspan
+    self.LONGSPAN = longspan
 
     self.COLUMNS_FOR_BATCH_NORM = ['open', 'v_AD', 'v_OBV', 'volume']
     self.COLUMNS_FOR_BATCH_NORM_WILDCARD = ['v_ADOSC']
@@ -30,7 +33,7 @@ class IndicatorCalculator():
     self.LOOKBACK_CNT = 128
 
     # Class init
-    self.verbose = False
+    self.verbose = verbose
     self.calculateGain = True
 
     self.onehot_encoder = OneHotEncoder(sparse=False)

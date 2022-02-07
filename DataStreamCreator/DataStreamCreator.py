@@ -1,3 +1,5 @@
+# Version 1.1 - 2022-02-07
+# - Parameters moved to constructor
 # Version 1 - 2021-11-11
 
 import numpy as np
@@ -13,26 +15,16 @@ import logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-RISE_GAIN_THRESHOLD = 0.0008 #0.0016
-FALL_GAIN_THRESHOLD = -0.0008 #0.000625
-
-FUTURE_LOOKAHEAD_CNT = 24
-
-SHORTSPAN = 6
-MIDSPAN = 48
-LONGSPAN = 120
-
 COLUMNS_FOR_BATCH_NORM = ['open', 'v_AD', 'v_OBV', 'volume'] 
 COLUMNS_FOR_BATCH_NORM_WILDCARD = ['v_ADOSC']
 
-LOOKBACK_CNT = 256
-
 #@title XBlockGenerator
 class XBlockGenerator:
-  def __init__(self, inDF, slice_size):
+  def __init__(self, inDF, slice_size, X_lookback_cnt):
     self.inDF = copy.deepcopy(inDF)
     self.slice_size = slice_size
-    self.slice_start_cnt = LOOKBACK_CNT
+    self.X_lookback_cnt = X_lookback_cnt
+    self.slice_start_cnt = X_lookback_cnt # Attention: The value of self.slice_start_cnt changes during iteration, self.X_lookback_cnt does not
     self.i = 0
     self._col_batch_norm = None
     self._col_batch_norm_indices = []
@@ -81,14 +73,14 @@ class XBlockGenerator:
       raise StopIteration
       
 
-    data_X = np.empty((_local_slice_size, LOOKBACK_CNT, self.inDFValues.shape[1]))
+    data_X = np.empty((_local_slice_size, self.X_lookback_cnt, self.inDFValues.shape[1]))
     data_X[:] = np.nan
     
     _dx_cnt = 0
     
     for self.i in range(self.slice_start_cnt,self.inDFValues.shape[0]):
       i = self.i
-      _slic = copy.deepcopy(self.inDFValues[i-LOOKBACK_CNT:i,:])
+      _slic = copy.deepcopy(self.inDFValues[i-self.X_lookback_cnt:i,:])
 
       # Norm all columns that are desired for batch norm
       for ind in self._col_batch_norm_indices:
@@ -124,12 +116,10 @@ class XBlockGenerator:
 
 #@title YGainGenerator
 class YGainGenerator:
-  def __init__(self, inDF, slice_size, rise_threshold, fall_threshold, smooth_cnt, smooth_cnt2):
+  def __init__(self, inDF, slice_size, rise_threshold, fall_threshold, smooth_cnt, smooth_cnt2, lookback_cnt, y_lookahead_cnt):
     self.gainDF = copy.deepcopy(pd.DataFrame(inDF.loc[:,'open']))
     self.slice_size = slice_size
-    self.slice_start_cnt = LOOKBACK_CNT
-    #self.rise_gain_threshold_factor = rise_gain_threshold_percent / 100.0
-    #self.fall_gain_threshold_factor = fall_gain_threshold_percent / 100.0
+    self.slice_start_cnt = lookback_cnt
     self.rise_threshold = rise_threshold
     self.fall_threshold = fall_threshold
     self.i = 0
@@ -137,23 +127,23 @@ class YGainGenerator:
     # Sort the table
     self.gainDF.sort_index(inplace = True)
     
-    # Pick values
-    #self.gainDFValues = copy.deepcopy(self.gainDF.values)
-    
     # Calculate direction
     _, _, _direction, _directiondev2nd = self.smoothMAandROC(copy.deepcopy(self.gainDF.values).flatten(), smooth_cnt, smooth_cnt2)
     _direction = np.nan_to_num(_direction, nan=0)
     _directiondev2nd = np.nan_to_num(_directiondev2nd, nan=0)
-    # logging.info("Quantiles of direction: q25={}; q75={}".format(np.quantile(np.abs(self.direction), 0.25), np.quantile(np.abs(self.direction), 0.75)))
-    
-    # Shift dir and 2nd array
-    self.direction = np.zeros(_direction.shape)
-    self.direction[:-FUTURE_LOOKAHEAD_CNT] = _direction[FUTURE_LOOKAHEAD_CNT:]
-    self.direction = np.nan_to_num(self.direction, nan=0)
-    
-    self.directiondev2nd = np.zeros(_directiondev2nd.shape)
-    self.directiondev2nd[:-FUTURE_LOOKAHEAD_CNT] = _directiondev2nd[FUTURE_LOOKAHEAD_CNT:]
-    self.directiondev2nd = np.nan_to_num(self.directiondev2nd, nan=0)
+
+    # Shift dir and 2nd array if necessary
+    if 0 < y_lookahead_cnt:
+      self.direction = np.zeros(_direction.shape)
+      self.direction[:-y_lookahead_cnt] = _direction[y_lookahead_cnt:]
+      self.direction = np.nan_to_num(self.direction, nan=0)
+      
+      self.directiondev2nd = np.zeros(_directiondev2nd.shape)
+      self.directiondev2nd[:-y_lookahead_cnt] = _directiondev2nd[y_lookahead_cnt:]
+      self.directiondev2nd = np.nan_to_num(self.directiondev2nd, nan=0)
+    else:
+      self.direction = _direction
+      self.directiondev2nd = _directiondev2nd
     
     del self.gainDF 
  
@@ -221,7 +211,13 @@ class YGainGenerator:
 
 #@title class FileListToDataStream
 class FileListToDataStream:
-  def __init__(self, fileList, batch_size, base_path, smooth_cnt, smooth_cnt2, parallel_generators = 4, shuffle = True, random_seed=42):
+  def __init__(self, fileList, batch_size, base_path,
+             smooth_cnt, smooth_cnt2, X_lookback_cnt, y_lookahead_cnt,
+             parallel_generators = 4, shuffle = True, random_seed=42,
+             rise_gain_threshold = 0.0, fall_gain_threshold = 0.0,
+             shortspan = 6, midspan = 48, longspan = 120,
+             verbose = False):
+    
     assert batch_size % parallel_generators == 0 # Todo: Provide next suitable batch sizes
     self.batch_size = batch_size
     self.gen_batch_size = int(batch_size / parallel_generators)
@@ -231,8 +227,15 @@ class FileListToDataStream:
     self.random_seed = random_seed
     self.smooth_cnt = smooth_cnt
     self.smooth_cnt2 = smooth_cnt2
+    self.y_lookahead_cnt = y_lookahead_cnt
+    self.X_lookback_cnt = X_lookback_cnt
+    self.rise_gain_threshold = rise_gain_threshold
+    self.fall_gain_threshold = fall_gain_threshold
+    self.shortspan = shortspan
+    self.midspan = midspan
+    self.longspan = longspan
+    self.verbose = verbose
 
-    #self.file_lists = []
     self.X_generators = []
     self.y_generators = []
 
@@ -241,7 +244,7 @@ class FileListToDataStream:
     self.onehot_encoder.fit_transform(np.array([-1,0,1]).reshape(-1,1))
 
     # Init IndicatorCalculator
-    self.ic = IndicatorCalculator()
+    self.ic = IndicatorCalculator(self.shortspan, self.midspan, self.longspan, self.verbose)
 
     # Shuffle file list
     if self.shuffle:
@@ -252,12 +255,6 @@ class FileListToDataStream:
     # Get split count to split file list
     file_split_cnt = int(np.ceil(len(self.fileList) / parallel_generators))
     logging.info("file_split_cnt: " + str(file_split_cnt))
-
-    # Get one file list for each generator
-    #_fl = copy.deepcopy(self.fileList)
-    #for i in range(parallel_generators):
-    #  self.file_lists.append(_fl[:file_split_cnt])
-    #  del _fl[:file_split_cnt]
 
     # Initalize generators
     for i in range(parallel_generators):
@@ -283,8 +280,8 @@ class FileListToDataStream:
     _indDF = self.ic.CreateAllIndicatorsTable(_tickDF)
     _normedDF = self.ic.NormPriceRelated(_indDF)
 
-    _xg = XBlockGenerator(_normedDF, generator_batch_size)
-    _yg = YGainGenerator(_normedDF, generator_batch_size, RISE_GAIN_THRESHOLD, FALL_GAIN_THRESHOLD, self.smooth_cnt, self.smooth_cnt2)
+    _xg = XBlockGenerator(_normedDF, generator_batch_size, self.X_lookback_cnt)
+    _yg = YGainGenerator(_normedDF, generator_batch_size, self.rise_gain_threshold, self.fall_gain_threshold, self.smooth_cnt, self.smooth_cnt2, self.X_lookback_cnt, self.y_lookahead_cnt)
 
     return _xg, _yg
 
