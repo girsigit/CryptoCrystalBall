@@ -116,12 +116,13 @@ class XBlockGenerator:
 
 #@title YGainGenerator
 class YGainGenerator:
-  def __init__(self, inDF, slice_size, rise_threshold, fall_threshold, smooth_cnt, smooth_cnt2, lookback_cnt, y_lookahead_cnt):
+  def __init__(self, inDF, slice_size, rise_threshold, fall_threshold, smooth_cnt, smooth_cnt2, lookback_cnt, y_lookahead_cnt, gain_lookaround_cnt):
     self.gainDF = copy.deepcopy(pd.DataFrame(inDF.loc[:,'open']))
     self.slice_size = slice_size
     self.slice_start_cnt = lookback_cnt
     self.rise_threshold = rise_threshold
     self.fall_threshold = fall_threshold
+    self.gain_lookaround_cnt = gain_lookaround_cnt
     self.i = 0
     
     # Sort the table
@@ -131,6 +132,33 @@ class YGainGenerator:
     _, _, _direction, _directiondev2nd = self.smoothMAandROC(copy.deepcopy(self.gainDF.values).flatten(), smooth_cnt, smooth_cnt2)
     _direction = np.nan_to_num(_direction, nan=0)
     _directiondev2nd = np.nan_to_num(_directiondev2nd, nan=0)
+
+    # Calculate Lookaround
+    self.gainDF['max_past_gain'] = 0.0
+    self.gainDF['max_future_gain'] = 0.0
+    for i in range(1,self.gainDF.shape[0]-1):
+      past_index = np.max([0,i-lookback_cnt])
+      future_index = np.min([self.gainDF.shape[0],i+lookback_cnt])
+
+      past_slice = self.gainDF.iloc[past_index:i].loc[:,'open'].values
+      future_slice = self.gainDF.iloc[i+1:future_index].loc[:,'open'].values
+
+      current_value = self.gainDF.iloc[i].values[0]
+
+      if 0 == past_slice.shape[0] or 0 == future_slice.shape[0]:
+        continue
+
+      min_past_value = np.min(past_slice)
+      max_future_value = np.max(future_slice)
+
+      if 0.0 != min_past_value:
+        self.gainDF.loc[self.gainDF.index[i],'max_past_gain'] = (current_value / min_past_value) - 1.0
+
+      if 0.0 != current_value:
+        self.gainDF.loc[self.gainDF.index[i],'max_future_gain'] = (max_future_value / current_value) - 1.0
+    
+    self.max_past_gain = self.gainDF.loc[:,'max_past_gain'].values
+    self.max_future_gain = self.gainDF.loc[:,'max_future_gain'].values
 
     # Shift dir and 2nd array if necessary
     if 0 < y_lookahead_cnt:
@@ -188,6 +216,14 @@ class YGainGenerator:
     
     _dir_slice = self.direction[self.slice_start_cnt : min([self.direction.shape[0], self.slice_start_cnt+_local_slice_size]) ]
     _dir2nddev_slice = self.directiondev2nd[self.slice_start_cnt : min([self.directiondev2nd.shape[0], self.slice_start_cnt+_local_slice_size]) ]
+
+    # Max gains
+    _max_past_gain_slice = self.max_past_gain[self.slice_start_cnt : min([self.max_past_gain.shape[0], self.slice_start_cnt+_local_slice_size]) ]
+    _max_future_gain_slice = self.max_future_gain[self.slice_start_cnt : min([self.max_future_gain.shape[0], self.slice_start_cnt+_local_slice_size]) ]
+
+    gains = np.empty((_max_past_gain_slice.shape[0],2))
+    gains[:,0] = _max_past_gain_slice
+    gains[:,1] = _max_future_gain_slice
     
     # Find rise and fall
     _falling = _dir_slice < self.fall_threshold
@@ -207,7 +243,7 @@ class YGainGenerator:
 
     self.slice_start_cnt += _local_slice_size
 
-    return gainCat, dir_float
+    return gainCat, dir_float, gains
 
 #@title class FileListToDataStream
 class FileListToDataStream:
@@ -286,7 +322,7 @@ class FileListToDataStream:
     return _xg, _yg
 
   def __next__(self):
-    y_type = 1 # 0 for categorical, 1 for float
+    y_type = 2 # 0 for categorical, 1 for float, 2 for gain lookaround
     
     _shape_invalid = True
 
@@ -356,7 +392,7 @@ class FileListToDataStream:
           
           if 0 == y_type:
             assert 1 == len(_y.shape)
-          elif 1 == y_type:
+          elif 1 == y_type or 2 == y_type:
             assert 2 == len(_y.shape)
           
           # Todo: Workaround to fix if shape is not (xx,1), finally check why this happens
