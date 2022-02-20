@@ -1,3 +1,5 @@
+# Version 1.2 - 2022-02-20
+# - Added past and future max gain as y values
 # Version 1.1 - 2022-02-07
 # - Parameters moved to constructor
 # Version 1 - 2021-11-11
@@ -248,7 +250,7 @@ class YGainGenerator:
 #@title class FileListToDataStream
 class FileListToDataStream:
   def __init__(self, fileList, batch_size, base_path,
-             smooth_cnt, smooth_cnt2, X_lookback_cnt, y_lookahead_cnt,
+             smooth_cnt, smooth_cnt2, X_lookback_cnt, y_lookahead_cnt, gain_lookaround_cnt,
              parallel_generators = 4, shuffle = True, random_seed=42,
              rise_gain_threshold = 0.0, fall_gain_threshold = 0.0,
              shortspan = 6, midspan = 48, longspan = 120,
@@ -265,6 +267,7 @@ class FileListToDataStream:
     self.smooth_cnt2 = smooth_cnt2
     self.y_lookahead_cnt = y_lookahead_cnt
     self.X_lookback_cnt = X_lookback_cnt
+    self.gain_lookaround_cnt = gain_lookaround_cnt
     self.rise_gain_threshold = rise_gain_threshold
     self.fall_gain_threshold = fall_gain_threshold
     self.shortspan = shortspan
@@ -317,7 +320,7 @@ class FileListToDataStream:
     _normedDF = self.ic.NormPriceRelated(_indDF)
 
     _xg = XBlockGenerator(_normedDF, generator_batch_size, self.X_lookback_cnt)
-    _yg = YGainGenerator(_normedDF, generator_batch_size, self.rise_gain_threshold, self.fall_gain_threshold, self.smooth_cnt, self.smooth_cnt2, self.X_lookback_cnt, self.y_lookahead_cnt)
+    _yg = YGainGenerator(_normedDF, generator_batch_size, self.rise_gain_threshold, self.fall_gain_threshold, self.smooth_cnt, self.smooth_cnt2, self.X_lookback_cnt, self.y_lookahead_cnt, self.gain_lookaround_cnt)
 
     return _xg, _yg
 
