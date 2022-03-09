@@ -1,3 +1,5 @@
+# Version 1.3 - 2022-03-09
+# Added past/future signal method and exponential smoothing of signals
 # Version 1.2 - 2022-02-20
 # - Added past and future max gain as y values
 # Version 1.1 - 2022-02-07
@@ -135,32 +137,46 @@ class YGainGenerator:
     _direction = np.nan_to_num(_direction, nan=0)
     _directiondev2nd = np.nan_to_num(_directiondev2nd, nan=0)
 
+    # Re-Smooth 2nd
+    _directiondev2nd,_ ,_ ,_ = self.smoothMAandROC(_directiondev2nd, smooth_cnt2, 1)
+    _directiondev2nd = np.nan_to_num(_directiondev2nd, nan=0)
+
     # Calculate Lookaround
     self.gainDF['max_past_gain'] = 0.0
     self.gainDF['max_future_gain'] = 0.0
-    for i in range(1,self.gainDF.shape[0]-1):
-      past_index = np.max([0,i-lookback_cnt])
-      future_index = np.min([self.gainDF.shape[0],i+lookback_cnt])
 
-      past_slice = self.gainDF.iloc[past_index:i].loc[:,'open'].values
-      future_slice = self.gainDF.iloc[i+1:future_index].loc[:,'open'].values
+    if not np.isnan(self.gain_lookaround_cnt): # If gain_lookaround_cnt is set to nan, skip the calculation (used in prediction)
+      for i in range(1,self.gainDF.shape[0]-1):
+        past_index = np.max([0,i-lookback_cnt])
+        future_index = np.min([self.gainDF.shape[0],i+lookback_cnt])
 
-      current_value = self.gainDF.iloc[i].values[0]
+        past_slice = self.gainDF.iloc[past_index:i].loc[:,'open'].values
+        future_slice = self.gainDF.iloc[i+1:future_index].loc[:,'open'].values
 
-      if 0 == past_slice.shape[0] or 0 == future_slice.shape[0]:
-        continue
+        current_value = self.gainDF.iloc[i].values[0]
 
-      min_past_value = np.min(past_slice)
-      max_future_value = np.max(future_slice)
+        if 0 == past_slice.shape[0] or 0 == future_slice.shape[0]:
+          continue
 
-      if 0.0 != min_past_value:
-        self.gainDF.loc[self.gainDF.index[i],'max_past_gain'] = (current_value / min_past_value) - 1.0
+        min_past_value = np.min(past_slice)
+        max_future_value = np.max(future_slice)
 
-      if 0.0 != current_value:
-        self.gainDF.loc[self.gainDF.index[i],'max_future_gain'] = (max_future_value / current_value) - 1.0
+        if 0.0 != min_past_value:
+          self.gainDF.loc[self.gainDF.index[i],'max_past_gain'] = (current_value / min_past_value) - 1.0
+
+        if 0.0 != current_value:
+          self.gainDF.loc[self.gainDF.index[i],'max_future_gain'] = (max_future_value / current_value) - 1.0
     
     self.max_past_gain = self.gainDF.loc[:,'max_past_gain'].values
     self.max_future_gain = self.gainDF.loc[:,'max_future_gain'].values
+
+    self.max_past_gain_ma, self.max_past_gain_dir,_ ,_ = self.smoothMAandROC(self.max_past_gain, smooth_cnt, smooth_cnt2)
+    self.max_future_gain_ma, self.max_future_gain_dir,_ ,_ = self.smoothMAandROC(self.max_future_gain, smooth_cnt, smooth_cnt2)
+
+    self.max_past_gain_ma = np.nan_to_num(self.max_past_gain_ma, nan=0)
+    self.max_future_gain_ma = np.nan_to_num(self.max_future_gain_ma, nan=0)
+    self.max_past_gain_dir = np.nan_to_num(self.max_past_gain_dir, nan=0)
+    self.max_future_gain_dir = np.nan_to_num(self.max_future_gain_dir, nan=0)
 
     # Shift dir and 2nd array if necessary
     if 0 < y_lookahead_cnt:
@@ -222,10 +238,22 @@ class YGainGenerator:
     # Max gains
     _max_past_gain_slice = self.max_past_gain[self.slice_start_cnt : min([self.max_past_gain.shape[0], self.slice_start_cnt+_local_slice_size]) ]
     _max_future_gain_slice = self.max_future_gain[self.slice_start_cnt : min([self.max_future_gain.shape[0], self.slice_start_cnt+_local_slice_size]) ]
+    
+    _max_past_gain_ma_slice = self.max_past_gain_ma[self.slice_start_cnt : min([self.max_past_gain_ma.shape[0], self.slice_start_cnt+_local_slice_size]) ]
+    _max_future_gain_ma_slice = self.max_future_gain_ma[self.slice_start_cnt : min([self.max_future_gain_ma.shape[0], self.slice_start_cnt+_local_slice_size]) ]
 
-    gains = np.empty((_max_past_gain_slice.shape[0],2))
-    gains[:,0] = _max_past_gain_slice
-    gains[:,1] = _max_future_gain_slice
+    _max_past_gain_dir_slice = self.max_past_gain_dir[self.slice_start_cnt : min([self.max_past_gain_dir.shape[0], self.slice_start_cnt+_local_slice_size]) ]
+    _max_future_gain_dir_slice = self.max_future_gain_dir[self.slice_start_cnt : min([self.max_future_gain_dir.shape[0], self.slice_start_cnt+_local_slice_size]) ]
+
+    gains = np.empty((_max_past_gain_slice.shape[0],6))
+    gains[:,0] = np.tanh(_max_past_gain_slice)    
+    gains[:,1] = np.tanh(_max_past_gain_ma_slice)
+    gains[:,2] = np.tanh(_max_past_gain_dir_slice)
+    
+    gains[:,3] = np.tanh(_max_future_gain_slice)
+    gains[:,4] = np.tanh(_max_future_gain_ma_slice) 
+    gains[:,5] = np.tanh(_max_future_gain_dir_slice)
+    
     
     # Find rise and fall
     _falling = _dir_slice < self.fall_threshold
@@ -250,10 +278,11 @@ class YGainGenerator:
 #@title class FileListToDataStream
 class FileListToDataStream:
   def __init__(self, fileList, batch_size, base_path,
-             smooth_cnt, smooth_cnt2, X_lookback_cnt, y_lookahead_cnt, gain_lookaround_cnt,
+             smooth_cnt, smooth_cnt2, X_lookback_cnt, y_lookahead_cnt, gain_lookaround_cnt, y_type,
              parallel_generators = 4, shuffle = True, random_seed=42,
              rise_gain_threshold = 0.0, fall_gain_threshold = 0.0,
              shortspan = 6, midspan = 48, longspan = 120,
+             y_exponent = 1.0,
              verbose = False):
     
     assert batch_size % parallel_generators == 0 # Todo: Provide next suitable batch sizes
@@ -274,6 +303,8 @@ class FileListToDataStream:
     self.midspan = midspan
     self.longspan = longspan
     self.verbose = verbose
+    self.y_type = y_type # 0 for categorical, 1 for float, 2 for gain lookaround
+    self.y_exponent = y_exponent
 
     self.X_generators = []
     self.y_generators = []
@@ -310,7 +341,7 @@ class FileListToDataStream:
     _fullname = os.path.join(self.base_path, fn)
 
     _tickDF = pd.read_csv(_fullname, encoding="utf-8", header=0, index_col='startsAt')
-    _tickDF.dropna(inplace=True)
+    _tickDF.dropna(inplace=True) # Does not work with cmc info being nan
 
     # If there is a quote volume, drop it
     if 'quoteVolume' in _tickDF.columns:
@@ -325,8 +356,6 @@ class FileListToDataStream:
     return _xg, _yg
 
   def __next__(self):
-    y_type = 2 # 0 for categorical, 1 for float, 2 for gain lookaround
-    
     _shape_invalid = True
 
     while _shape_invalid:
@@ -335,7 +364,7 @@ class FileListToDataStream:
         for i in range(self.parallel_generators):
           try:
             _X = next(self.X_generators[i])
-            _y = next(self.y_generators[i])[y_type]
+            _y = next(self.y_generators[i])[self.y_type]
           except StopIteration: # If the generator stop internally
             # Check if the file list is empty
             if 0 == len(self.fileList):
@@ -349,7 +378,7 @@ class FileListToDataStream:
               self.X_generators[i], self.y_generators[i] = self.__initGenerators__(_fn, self.gen_batch_size)
               try:
                 _X = next(self.X_generators[i])
-                _y = next(self.y_generators[i])[y_type]
+                _y = next(self.y_generators[i])[self.y_type]
                 
                 break
               except StopIteration:
@@ -374,7 +403,7 @@ class FileListToDataStream:
             try:
               _missing_cnt = self.gen_batch_size - _X.shape[0]
               _missing_X = self.X_generators[i].getCustomSizedSlice(_missing_cnt)
-              _missing_y = self.y_generators[i].getCustomSizedSlice(_missing_cnt)[y_type]
+              _missing_y = self.y_generators[i].getCustomSizedSlice(_missing_cnt)[self.y_type]
               
               _X = np.concatenate((_X, _missing_X))
               _y = np.concatenate((_y, _missing_y))
@@ -391,11 +420,11 @@ class FileListToDataStream:
               self.X_generators[i], self.y_generators[i] = self.__initGenerators__(_fn, self.gen_batch_size)
               
               _X = next(self.X_generators[i])
-              _y = next(self.y_generators[i])[y_type]
+              _y = next(self.y_generators[i])[self.y_type]
           
-          if 0 == y_type:
+          if 0 == self.y_type:
             assert 1 == len(_y.shape)
-          elif 1 == y_type or 2 == y_type:
+          elif 1 == self.y_type or 2 == self.y_type:
             assert 2 == len(_y.shape)
           
           # Todo: Workaround to fix if shape is not (xx,1), finally check why this happens
@@ -411,6 +440,8 @@ class FileListToDataStream:
             _X_data = np.concatenate((_X_data, _X))
             _y_data = np.concatenate((_y_data, _y))
 
+          _y_data = _y_data**self.y_exponent
+
         # Try again if size is wrong
         if self.batch_size != _X_data.shape[0]:
           logging.warning("\nself.batch_size != _X_data.shape[0]")
@@ -424,7 +455,7 @@ class FileListToDataStream:
         if self.shuffle:
           _X_data, _y_data = sklearn.utils.shuffle(_X_data, _y_data, random_state=self.random_seed)
 
-        if 0 == y_type:
+        if 0 == self.y_type:
           _integer_encoded = _y_data.reshape(len(_y_data), 1)
           _y_data = self.onehot_encoder.transform(_integer_encoded).astype(int)
 
