@@ -121,13 +121,24 @@ class XBlockGenerator:
 
 
 class YGainGenerator:
-    def __init__(self, inDF, slice_size, rise_threshold, fall_threshold, smooth_cnt, smooth_cnt2, lookback_cnt, y_lookahead_cnt, gain_lookaround_cnt):
+    def __init__(self, inDF, slice_size,
+                 rise_threshold, fall_threshold,
+                 smooth_cnt, smooth_cnt2,
+                 lookback_cnt, y_lookahead_cnt, gain_lookaround_cnt,
+                 expected_gain_lookforward, entr_thr, entr_thr2, entr_thr3,
+                 exit_thr, exit_thr2):
         self.gainDF = copy.deepcopy(pd.DataFrame(inDF.loc[:, 'open']))
         self.slice_size = slice_size
         self.slice_start_cnt = lookback_cnt
         self.rise_threshold = rise_threshold
         self.fall_threshold = fall_threshold
         self.gain_lookaround_cnt = gain_lookaround_cnt
+        self.expected_gain_lookforward = expected_gain_lookforward
+        self.entr_thr = entr_thr
+        self.entr_thr2 = entr_thr2
+        self.entr_thr3 = entr_thr3
+        self.exit_thr = exit_thr
+        self.exit_thr2 = exit_thr2
         self.i = 0
 
         # Sort the table
@@ -202,6 +213,21 @@ class YGainGenerator:
         else:
             self.direction = _direction
             self.directiondev2nd = _directiondev2nd
+
+        # Calculate entry and exit signals - y-type 3
+        # Todo: tanh and *1000 also at __create_block__ --> Merge it to one place
+        _direction_adapted = np.tanh(_direction * 1000.0)
+        _directiondev2nd_adapted = np.tanh(_directiondev2nd)
+
+        _direction_futureshifted = np.empty(_direction_adapted.shape)
+        _direction_futureshifted[:] = 0.0
+        _direction_futureshifted[:-
+                                 self.expected_gain_lookforward] = _direction_adapted[self.expected_gain_lookforward:]
+
+        self.entry = (_direction_adapted >= self.entr_thr) & (
+            _direction_futureshifted >= self.entr_thr2) & (_directiondev2nd_adapted >= self.entr_thr3)
+        self.exit = (_direction_adapted <= self.exit_thr) & (
+            _direction_futureshifted <= self.exit_thr2)
 
         del self.gainDF
 
@@ -286,15 +312,27 @@ class YGainGenerator:
 
         gainCat = _falling + _rising
 
+        # Todo: tanh and *1000 also at entry exit calc --> Merge it to one place
         dir_float = np.empty((_dir_slice.shape[0], 2))
         dir_float[:, 0] = np.tanh(_dir_slice * 1000.0)
         dir_float[:, 1] = np.tanh(_dir2nddev_slice)
 
-        #logging.info("_dir_slice min max: " + str((np.min(_dir_slice), np.max(_dir_slice))))
+        # Entry and exit signals - y-type 3
+        _entry_slice = self.entry[self.slice_start_cnt: min(
+            [self.entry.shape[0], self.slice_start_cnt+_local_slice_size])]
+        _exit_slice = self.exit[self.slice_start_cnt: min(
+            [self.exit.shape[0], self.slice_start_cnt+_local_slice_size])]
+
+        _signals = np.empty((_entry_slice.shape[0], 3))
+        _signals[:, 0] = _entry_slice
+        _signals[:, 1] = _exit_slice
+        # Placeholder for "nothing" to use binary crossentropy loss
+        _signals[:, 2] = np.logical_not(
+            np.logical_or(_entry_slice, _exit_slice))
 
         self.slice_start_cnt += _local_slice_size
 
-        return gainCat, dir_float, gains
+        return gainCat, dir_float, gains, _signals
 
 
 class FileListToDataStream:
@@ -304,6 +342,8 @@ class FileListToDataStream:
                  rise_gain_threshold=0.0, fall_gain_threshold=0.0,
                  shortspan=6, midspan=48, longspan=120,
                  y_exponent=1.0,
+                 expected_gain_lookforward=48, entr_thr=0.0, entr_thr2=0.0, entr_thr3=0.0,
+                 exit_thr=0.0, exit_thr2=0.0,
                  verbose=False):
 
         # Todo: Provide next suitable batch sizes
@@ -324,10 +364,18 @@ class FileListToDataStream:
         self.shortspan = shortspan
         self.midspan = midspan
         self.longspan = longspan
+        self.y_exponent = y_exponent
+        self.expected_gain_lookforward = expected_gain_lookforward
+        self.entr_thr = entr_thr
+        self.entr_thr2 = entr_thr2
+        self.entr_thr3 = entr_thr3
+        self.exit_thr = exit_thr
+        self.exit_thr2 = exit_thr2
+
         self.verbose = verbose
+
         # 0 for categorical, 1 for float, 2 for gain lookaround, 3 for entry / exit
         self.y_type = y_type
-        self.y_exponent = y_exponent
 
         self.X_generators = []
         self.y_generators = []
@@ -379,7 +427,8 @@ class FileListToDataStream:
         _xg = XBlockGenerator(
             _normedDF, generator_batch_size, self.X_lookback_cnt)
         _yg = YGainGenerator(_normedDF, generator_batch_size, self.rise_gain_threshold, self.fall_gain_threshold,
-                             self.smooth_cnt, self.smooth_cnt2, self.X_lookback_cnt, self.y_lookahead_cnt, self.gain_lookaround_cnt)
+                             self.smooth_cnt, self.smooth_cnt2, self.X_lookback_cnt, self.y_lookahead_cnt, self.gain_lookaround_cnt,
+                             self.expected_gain_lookforward, self.entr_thr, self.entr_thr2, self.entr_thr3, self.exit_thr, self.exit_thr2)
 
         return _xg, _yg
 
@@ -463,7 +512,7 @@ class FileListToDataStream:
 
                 if 0 == self.y_type:
                     assert 1 == len(_y.shape)
-                elif 1 == self.y_type or 2 == self.y_type:
+                elif 1 == self.y_type or 2 == self.y_type or 3 == self.y_type:
                     assert 2 == len(_y.shape)
 
                 # Todo: Workaround to fix if shape is not (xx,1), finally check why this happens
