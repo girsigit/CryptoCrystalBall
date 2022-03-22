@@ -1,7 +1,10 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# # Version 4.0 - 2022-03-02
+# - Using strategy FF1 with direct predicted signals
 # # Version 3.0
+# - 2022-03-02 NOT WORKING, wrong model
 # - Two-model prediciton, including daily data
 # - Strategy 2022_RG_2
 # # Version 2.0
@@ -22,23 +25,24 @@
 
 # In[ ]:
 
+# Import custom modules
 import sys
 sys.path.insert(0, "../../IndicatorCalculator")
 sys.path.insert(0, "../../DataStreamCreator")
 
-# Import custom modules
-from dotenv import load_dotenv
-import os
-import talib
-import time
-from datetime import datetime
-import json
-import pandas as pd
-import numpy as np
-import requests
-import DataStreamCreator as dg
-from IndicatorCalculator import IndicatorCalculator, IndicatorCalculationError
 import logging
+from IndicatorCalculator import IndicatorCalculator, IndicatorCalculationError
+import DataStreamCreator as dg
+import requests
+import numpy as np
+import pandas as pd
+import json
+from datetime import datetime
+import time
+import talib
+import os
+from dotenv import load_dotenv
+
 
 
 # In[ ]:
@@ -93,9 +97,9 @@ VOL_LIMIT = 100000.0
 
 # In[ ]:
 
-ENTR_THR = 0.6
-ENTR_THR2 = 0.1
-EXIT_THR = -0.5
+ENTR_THR = 0.5
+ENTR_THR2 = 0.3
+EXIT_THR = 0.95
 
 
 # In[ ]:
@@ -218,29 +222,32 @@ ic = IndicatorCalculator(
 def GenerateSignals(p1, p2, pday, quoteVolume):
     # BASE_PATH2 == short signals
 
-    p1_dir = p1[-1, 0]
-    p1_dir_previous = p1[-2, 0]
+    p1_entry = p1[-1, 0]
+    p1_entry_previous = p1[-2, 0]
 
-    p2_dir = p2[-1, 0]
-    p2_dir_previous = p2[-2, 0]
+    p1_exit = p1[-1, 1]
+    p1_exit_previous = p1[-2, 1]
 
-    pday_dir = pday[-1, 0]
+    # p2_dir = p2[-1, 0]
+    # p2_dir_previous = p2[-2, 0]
 
-    # _2022_RG_2
-    _entr = ((p2_dir - p1_dir) >= ENTR_THR) & ((p2_dir_previous - p1_dir_previous)
-                                               < ENTR_THR) & (pday_dir >= ENTR_THR2) & (quoteVolume >= VOL_LIMIT)
-    _exit = ((p2_dir - p1_dir) <=
-             EXIT_THR) & ((p2_dir_previous - p1_dir_previous) > EXIT_THR)
+    # pday_dir = pday[-1, 0]
+
+    # _FF_1
+    _entr = (p1_entry >= ENTR_THR) & (p1_entry_previous < ENTR_THR) & (
+        p1_exit <= ENTR_THR2) & (quoteVolume >= VOL_LIMIT)
+
+    _exit = (p1_exit >= EXIT_THR) & (p1_exit_previous < EXIT_THR)
 
     if _entr or _exit:
         logging.info({
             'entry': _entr,
             'exit': _exit,
-            'p1_dir': p1_dir,
-            'p1_dir_previous': p1_dir_previous,
-            'p2_dir': p2_dir,
-            'p2_dir_previous': p2_dir_previous,
-            'pday_dir': pday_dir
+            'p1_entry': p1_entry,
+            'p1_entry_previous': p1_entry_previous,
+            'p1_exit': p1_exit,
+            'p1_exit_previous': p1_exit_previous,
+            'quoteVolume': quoteVolume
         })
 
     return {
@@ -400,15 +407,15 @@ for m in suitable_markets:
         normedDFHourly = PrepareTickData(ticksHourly)
 
         # Predict daily
-        ticksDaily = GetTicks(m, TICK_URL_DAILY)
-        normedDFDaily = PrepareTickData(ticksDaily)
+        # ticksDaily = GetTicks(m, TICK_URL_DAILY)
+        # normedDFDaily = PrepareTickData(ticksDaily)
 
         # Model 2 daily prediction
-        pday = GetRemotePrediction(normedDFDaily, 2)
-        if pday is None:
-            break
-        elif isinstance(pday, str) and "continue" == pday:
-            continue
+        # pday = GetRemotePrediction(normedDFDaily, 2)
+        # if pday is None:
+        #     break
+        # elif isinstance(pday, str) and "continue" == pday:
+        #     continue
 
         # Model 1 prediction
         p1 = GetRemotePrediction(normedDFHourly, 1)
@@ -418,18 +425,18 @@ for m in suitable_markets:
             continue
 
         # Model 2 prediction
-        p2 = GetRemotePrediction(normedDFHourly, 2)
-        if p2 is None:
-            break
-        elif isinstance(p2, str) and "continue" == p2:
-            continue
+        # p2 = GetRemotePrediction(normedDFHourly, 2)
+        # if p2 is None:
+        #     break
+        # elif isinstance(p2, str) and "continue" == p2:
+        #     continue
 
         # Get 24h data
         qv = ms.loc[m, "quoteVolume"]
         # pc = ms.loc[m, "percentChange"] / 100.0
 
         # Generate Signals
-        signals = GenerateSignals(p1, p2, pday, qv)
+        signals = GenerateSignals(p1, None, None, qv)
 
         if signals['exit']:
             msg = m + ' exit signal'
