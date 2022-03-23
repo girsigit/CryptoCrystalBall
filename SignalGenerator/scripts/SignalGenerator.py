@@ -277,7 +277,7 @@ def WriteSignalFile(cur, direction):
         logging.error(ex)
 
 
-WriteSignalFile('i-am-a-debug-signal', 'entry-or-exit')
+# WriteSignalFile('i-am-a-debug-signal', 'entry-or-exit')
 
 
 # In[ ]:
@@ -441,7 +441,6 @@ for m in suitable_markets:
         if signals['exit']:
             msg = m + ' exit signal'
             logging.info(msg)
-            logging.info(p)
             logging.info(signals)
 
             SendTelegramInfo(msg)
@@ -449,7 +448,6 @@ for m in suitable_markets:
         elif signals['entry']:
             msg = m + ' entry signal'
             logging.info(msg)
-            logging.info(p)
             logging.info(signals)
 
             SendTelegramInfo(msg)
