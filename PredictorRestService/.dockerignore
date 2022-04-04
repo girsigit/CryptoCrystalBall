@@ -1,0 +1,2 @@
+# Model files (they are mapped using -v at docker run)
+**/*.h5

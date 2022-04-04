@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# Version 4.1 - 2022-04-04
+# - Using model OO_1
 # # Version 4.0 - 2022-03-02
 # - Using strategy FF1 with direct predicted signals
 # # Version 3.0
@@ -29,30 +31,20 @@
 import sys
 sys.path.insert(0, "../../IndicatorCalculator")
 sys.path.insert(0, "../../DataStreamCreator")
-
-import logging
 from IndicatorCalculator import IndicatorCalculator, IndicatorCalculationError
 import DataStreamCreator as dg
-import requests
-import numpy as np
-import pandas as pd
-import json
-from datetime import datetime
-import time
-import talib
-import os
+
 from dotenv import load_dotenv
+import os
+import talib
+import time
+from datetime import datetime
+import json
+import pandas as pd
+import numpy as np
+import requests
+import logging
 
-
-
-# In[ ]:
-
-
-# import tensorflow as tf
-# from tensorflow.keras.layers import Input, Dense, Add, Flatten, Concatenate, Activation, LSTM, Permute
-# from tensorflow.keras.models import Model
-
-# print(tf.__version__)
 
 # In[ ]:
 
@@ -97,9 +89,10 @@ VOL_LIMIT = 100000.0
 
 # In[ ]:
 
-ENTR_THR = 0.5
-ENTR_THR2 = 0.3
-EXIT_THR = 0.95
+ENTR_THR = 0.1
+ENTR_THR2 = 0.55
+EXIT_THR = 0.3
+EXIT_THR2 = 0.05
 
 
 # In[ ]:
@@ -237,7 +230,8 @@ def GenerateSignals(p1, p2, pday, quoteVolume):
     _entr = (p1_entry >= ENTR_THR) & (p1_entry_previous < ENTR_THR) & (
         p1_exit <= ENTR_THR2) & (quoteVolume >= VOL_LIMIT)
 
-    _exit = (p1_exit >= EXIT_THR) & (p1_exit_previous < EXIT_THR)
+    _exit = (p1_exit >= EXIT_THR) & (
+        p1_exit_previous < EXIT_THR) & (p1_entry <= EXIT_THR2)
 
     if _entr or _exit:
         logging.info({
