@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
-
+# Version 4.1.1 - 2022-04-06
+# - Added entry signal filtering using a vaild currencies list
 # Version 4.1 - 2022-04-04
 # - Using model OO_1
 # # Version 4.0 - 2022-03-02
@@ -36,7 +37,6 @@ import DataStreamCreator as dg
 
 from dotenv import load_dotenv
 import os
-import talib
 import time
 from datetime import datetime
 import json
@@ -117,6 +117,12 @@ if IGNORE_STRINGS is None:
     raise Exception("IGNORE_STRINGS is None")
 else:
     IGNORE_STRINGS = json.loads(IGNORE_STRINGS)
+
+VALID_CURR_STRINGS = os.getenv('VALID_CURR_STRINGS')
+if VALID_CURR_STRINGS is None:
+    raise Exception("VALID_CURR_STRINGS is None")
+else:
+    VALID_CURR_STRINGS = json.loads(VALID_CURR_STRINGS)
 
 # # Get Market Names
 
@@ -440,12 +446,17 @@ for m in suitable_markets:
             SendTelegramInfo(msg)
             WriteSignalFile(m, 'exit')
         elif signals['entry']:
-            msg = m + ' entry signal'
-            logging.info(msg)
-            logging.info(signals)
+            if m.split("-")[0] in VALID_CURR_STRINGS:
+                msg = m + ' entry signal'
+                logging.info(msg)
+                logging.info(signals)
 
-            SendTelegramInfo(msg)
-            WriteSignalFile(m, 'entry')
+                SendTelegramInfo(msg)
+                WriteSignalFile(m, 'entry')
+            else:
+                msg = m + ' would be an entry signal, but was not in valid currs'
+                logging.info(msg)
+                logging.info(signals)
 
     except KeyboardInterrupt:
         raise
