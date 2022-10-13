@@ -19,12 +19,12 @@ import logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-COLUMNS_FOR_BATCH_NORM = ['open', 'v_AD', 'v_OBV', 'volume']
+COLUMNS_FOR_BATCH_NORM = ['v_AD', 'v_OBV', 'volume'] # Todo: Removed 'open', different behaviour in older applications now
 COLUMNS_FOR_BATCH_NORM_WILDCARD = ['v_ADOSC']
 
 
 class XBlockGenerator:
-    def __init__(self, inDF, slice_size, X_lookback_cnt):
+    def __init__(self, inDF, slice_size, X_lookback_cnt, batch_norm, batch_norm_volume):
         self.inDF = copy.deepcopy(inDF)
         self.slice_size = slice_size
         self.X_lookback_cnt = X_lookback_cnt
@@ -34,6 +34,8 @@ class XBlockGenerator:
         self._col_batch_norm = None
         self._col_batch_norm_indices = []
         self._vol_col_index = []
+        self.batch_norm = batch_norm
+        self.batch_norm_volume = batch_norm_volume
 
         # Sort the table
         self.inDF.sort_index(inplace=True)
@@ -88,19 +90,21 @@ class XBlockGenerator:
             _slic = copy.deepcopy(self.inDFValues[i-self.X_lookback_cnt:i, :])
 
             # Norm all columns that are desired for batch norm
-            for ind in self._col_batch_norm_indices:
-                _init_val = _slic[0, ind]  # _slic.loc[np.min(_slic.index),c]
+            if True == self.batch_norm:
+                for ind in self._col_batch_norm_indices:
+                    _init_val = _slic[0, ind]  # _slic.loc[np.min(_slic.index),c]
 
-                if 0.0 != _init_val:
-                    _slic[:, ind] /= _init_val
-                    _slic[:, ind] -= 1.0
-                else:
-                    _slic[:, ind] = 0.0
+                    if 0.0 != _init_val:
+                        _slic[:, ind] /= _init_val
+                        _slic[:, ind] -= 1.0
+                    else:
+                        _slic[:, ind] = 0.0
 
             # Norm the volume column to max == 1.0
-            _vol_max = np.max(_slic[:, self._vol_col_index])
-            if 0.0 < _vol_max:
-                _slic[:, self._vol_col_index] /= _vol_max
+            if True == self.batch_norm_volume:
+                _vol_max = np.max(_slic[:, self._vol_col_index])
+                if 0.0 < _vol_max:
+                    _slic[:, self._vol_col_index] /= _vol_max
 
             # data_X.append(_slic)
             data_X[_dx_cnt, :, :] = _slic
@@ -344,7 +348,10 @@ class FileListToDataStream:
                  y_exponent=1.0,
                  expected_gain_lookforward=48, entr_thr=0.0, entr_thr2=0.0, entr_thr3=0.0,
                  exit_thr=0.0, exit_thr2=0.0,
-                 verbose=False):
+                 norm_price_related_indicators=True,
+                 verbose=False,
+                 batch_norm=True,
+                 batch_norm_volume=True):
 
         # Todo: Provide next suitable batch sizes
         assert batch_size % parallel_generators == 0
@@ -371,6 +378,9 @@ class FileListToDataStream:
         self.entr_thr3 = entr_thr3
         self.exit_thr = exit_thr
         self.exit_thr2 = exit_thr2
+        self.norm_price_related_indicators = norm_price_related_indicators
+        self.batch_norm = batch_norm
+        self.batch_norm_volume = batch_norm_volume
 
         self.verbose = verbose
 
@@ -422,10 +432,14 @@ class FileListToDataStream:
             _tickDF.drop('quoteVolume', axis=1, inplace=True)
 
         _indDF = self.ic.CreateAllIndicatorsTable(_tickDF)
-        _normedDF = self.ic.NormPriceRelated(_indDF)
+
+        if True == self.norm_price_related_indicators:
+            _normedDF = self.ic.NormPriceRelated(_indDF)
+        else:
+            _normedDF = _indDF
 
         _xg = XBlockGenerator(
-            _normedDF, generator_batch_size, self.X_lookback_cnt)
+            _normedDF, generator_batch_size, self.X_lookback_cnt, self.batch_norm, self.batch_norm_volume)
         _yg = YGainGenerator(_normedDF, generator_batch_size, self.rise_gain_threshold, self.fall_gain_threshold,
                              self.smooth_cnt, self.smooth_cnt2, self.X_lookback_cnt, self.y_lookahead_cnt, self.gain_lookaround_cnt,
                              self.expected_gain_lookforward, self.entr_thr, self.entr_thr2, self.entr_thr3, self.exit_thr, self.exit_thr2)
