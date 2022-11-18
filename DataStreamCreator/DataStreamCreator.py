@@ -1,3 +1,7 @@
+# Version 2.0 - 2022-11-16
+# - Important: Order of columns in created indicator table is changed, no compatible to V1.x versions!
+# - Major restructuring, code cleanup and documentation
+
 # Version 1.3 - 2022-03-09
 # Added past/future signal method and exponential smoothing of signals
 # Version 1.2 - 2022-02-20
@@ -10,8 +14,9 @@ import numpy as np
 import pandas as pd
 import copy
 import os
+import gc
 import sklearn.utils
-from IndicatorCalculator import IndicatorCalculator, IndicatorCalculationError
+from IndicatorCalculator import IndicatorCalculator
 from sklearn.preprocessing import OneHotEncoder
 import talib
 
@@ -19,107 +24,202 @@ import logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-COLUMNS_FOR_BATCH_NORM = ['v_AD', 'v_OBV', 'volume'] # Todo: Removed 'open', different behaviour in older applications now
+
+# Define the columns which shall be normalized batch-wise
+# This is especially needed for volume-based indicators, as they have a range of around 1e7
+# Todo: Pass as kwarg
+COLUMNS_FOR_BATCH_NORM = ['v_AD', 'v_OBV', 'volume']
 COLUMNS_FOR_BATCH_NORM_WILDCARD = ['v_ADOSC']
 
 
 class XBlockGenerator:
-    def __init__(self, inDF, slice_size, X_lookback_cnt, batch_norm, batch_norm_volume):
-        self.inDF = copy.deepcopy(inDF)
-        self.slice_size = slice_size
-        self.X_lookback_cnt = X_lookback_cnt
-        # Attention: The value of self.slice_start_cnt changes during iteration, self.X_lookback_cnt does not
-        self.slice_start_cnt = X_lookback_cnt
-        self.i = 0
-        self._col_batch_norm = None
-        self._col_batch_norm_indices = []
-        self._vol_col_index = []
-        self.batch_norm = batch_norm
-        self.batch_norm_volume = batch_norm_volume
+    '''
+    The `XBlockGenerator` class is used to generate time-frame slices (= X-blocks) out of a time series table of tick and indicator data.
+    For this task, an input `pd.DataFrame` `tickAndIndicatorDF` is processed row by row.
+    It is called 'X' because its purpose is to be used as input data for machine learning networks (== X-data).
+
+    Every X-block is created by using a specific amount of table rows, defined by the `int` parameter `X_Block_lenght`.
+    If the tick data is in hours and `X_lookback_cnt=12`, the generator would return slices of 12 hours.
+    The step size between the X-blocks is 1, so the resulting DFs in the example would be: 00:00-11:00, 01:00-12:00, 02:00-13:00, ...
+
+    Requried constructor arguments:
+    - `tick_and_indicator_DF`: An `pd.DataFrame` containing a time series of tick and indicator data. This table is normally created using the `IndicatorCalculator` class.
+    - `generator_batch_size`: An `int` variable defining how many X-Blocks the generator shall return on each next() call.
+    - `X_Block_lenght`: This `int` variable defines how many timestamps each X-Block shall cover. Former called `X_lookback_cnt`.
+    - `initial_value_norm`: A `bool` value to switch if all indicators included in `Todo` shall be normalized based on the first value in each X-block. This is then done for each indicator individually, the first value is then 0.0, all following are relative to it. Used for volume inidcators with a large spread. `True` by default.
+    - `limit_volume_value`: A `bool` value to switch if the volume column shall be scaled to a maximum value of `1.0`. This can be helpful as the volume may have a large absolute value spread. `True` by default.
+
+    Returns: A generator, X-blocks can be acquired using next()
+    Raises: StopIteration if the tick and indicator table is fully consumed
+    '''
+
+    def __init__(self,
+                 tick_and_indicator_DF: pd.DataFrame,
+                 generator_batch_size,
+                 X_Block_lenght: int,
+                 initial_value_norm: bool = True,
+                 limit_volume_value: bool = True):
+
+        # Create a save copy of the input table
+        self.tick_and_indicator_DF = copy.deepcopy(tick_and_indicator_DF)
+
+        # At the end of the initializer, the tick and indicator values are stored as np.array instead of a pd.DataFrame to improve speed
+        self.tick_and_indicator_values = None
+
+        # -------------------------------------------------
+        # Values are assigned to class-level self variables
+        # -------------------------------------------------
+
+        self.generator_batch_size = int(generator_batch_size)  # How many X-Blocks the generator shall return on each next() call
+        self.X_Block_lenght = int(X_Block_lenght) # The lenght of each X-Block (--> How many time-step into the past the block will reach)
+        assert 1 <= self.generator_batch_size
+        assert 2 <= self.X_Block_lenght
+
+        # Attention: The value of self.slice_start_cnt changes during iteration, self.X_Block_lenght does not
+        self.slice_start_cnt = X_Block_lenght
+
+        # This variable is used in the block-gen for loop as a 'class-global' count variable, to preseve the position in the data array.
+        self.block_end_index: int = 0
+
+        # Lists of column names and indices for initial value norming (indices are the used instead of names for faster processing)
+        self._col_names_initial_value_norm = None
+        self._col_indices_initial_value_norm = []
+        self._vol_col_index = -1
+
+        # Flags if norming shall be done
+        self.initial_value_norm = initial_value_norm
+        self.limit_volume_value = limit_volume_value
 
         # Sort the table
-        self.inDF.sort_index(inplace=True)
+        self.tick_and_indicator_DF.sort_index(inplace=True)
 
-        # Find batch norm columns names
-        self._col_batch_norm = copy.deepcopy(COLUMNS_FOR_BATCH_NORM)
-        for c in self.inDF.columns:
+        # Find initial value norming columns names
+        # Todo: COLUMNS_FOR_BATCH_NORM as kwarg
+        self._col_names_initial_value_norm = copy.deepcopy(
+            COLUMNS_FOR_BATCH_NORM)
+        for c in self.tick_and_indicator_DF.columns:
             for wc in COLUMNS_FOR_BATCH_NORM_WILDCARD:
                 if wc in c:
-                    self._col_batch_norm.append(c)
+                    self._col_names_initial_value_norm.append(c)
 
-        # Find batch norm columns indices
-        for c in self._col_batch_norm:
-            self._col_batch_norm_indices.append(
-                list(self.inDF.columns).index(c)
-            )
+        # Find initial value norming columns indices (based on the column names)
+        for c in self._col_names_initial_value_norm:
+            if c in self.tick_and_indicator_DF.columns: # Only if present
+                self._col_indices_initial_value_norm.append(
+                    list(self.tick_and_indicator_DF.columns).index(c)
+                )
 
         # Find volume column index
-        if 'volume' in self.inDF.columns:
-            self._vol_col_index = list(self.inDF.columns).index('volume')
+        if 'volume' in self.tick_and_indicator_DF.columns:
+            self._vol_col_index = list(
+                self.tick_and_indicator_DF.columns).index('volume')
 
-        self.inDFValues = copy.deepcopy(self.inDF.values)
-        del self.inDF
+        # Extract the values as np.array and delete the table to save memory
+        self.tick_and_indicator_values = copy.deepcopy(
+            self.tick_and_indicator_DF.values)
+        del self.tick_and_indicator_DF
+        gc.collect()
 
     def __next__(self):
+        '''
+        Create a new X data block of standard length `X_Block_lenght` and return it.
+
+        The data type of the block is `numpy.array`.
+
+        Raises: StopIteration if the tick and indicator table is fully consumed
+        '''
         return self.__create_block__()
 
-    def getCustomSizedSlice(self, custom_slice_size):
-        assert 0 < custom_slice_size
-        return self.__create_block__(custom_slice_size)
+    def getCustomSizedSlice(self, custom_block_length: int):
+        '''
+        Create a new X data block of customized length `custom_block_length` and return it.
+        This feature is required to fill up a batch of X-blocks in the overall process if a previous generator runs out of data.
 
-    def __create_block__(self, custom_slice_size=None):
-        # data_X = []
-        if custom_slice_size is None:
-            _local_slice_size = self.slice_size
+        Optional arguments:
+        - `custom_block_length`: The lenght (in time steps) of the block to be created
+
+        The data type of the block is `numpy.array`.
+
+        Raises: StopIteration if the tick and indicator table is fully consumed
+        '''
+        assert 0 < int(custom_block_length)
+        return self.__create_block__(int(custom_block_length))
+
+    def __create_block__(self, custom_block_length: int = -1):
+        '''
+        Create a new X data block. A customized length an be set using `custom_block_length`.
+        This feature is required to fill up a batch of X-blocks in the overall process if a previous generator runs out of data.
+
+        Requried arguments:
+        - `custom_block_length`: The lenght (in time steps) of the block to be created
+
+        The data type of the block is `numpy.array`.
+
+        Raises: StopIteration if the tick and indicator table is fully consumed
+        Todo: There are several reasons for StopIteration
+        '''
+
+        if 0 > custom_block_length:
+            block_length = self.generator_batch_size
         else:
-            _local_slice_size = custom_slice_size
+            block_length = custom_block_length
 
-        # Raise StopIteration if table is consumed
-        if self.slice_start_cnt >= self.inDFValues.shape[0]:
-            logging.info("Stop Iteration in Line 74 - Table consumed in X Gen")
+        # If the start is outside the data array's range (array is consumed), stop the iterator by raising StopIteration
+        if self.slice_start_cnt >= self.tick_and_indicator_values.shape[0]:
+            logging.debug("XBlockGenerator StopIteration - Array is consumed")
             raise StopIteration
 
+        # Create an new empty array for the X-Block that are generated
         data_X = np.empty(
-            (_local_slice_size, self.X_lookback_cnt, self.inDFValues.shape[1]))
+            (block_length, self.X_Block_lenght, self.tick_and_indicator_values.shape[1]))
         data_X[:] = np.nan
 
-        _dx_cnt = 0
+        # A count variable for the current position in the data_X array
+        data_X_position = 0
 
-        for self.i in range(self.slice_start_cnt, self.inDFValues.shape[0]):
-            i = self.i
-            _slic = copy.deepcopy(self.inDFValues[i-self.X_lookback_cnt:i, :])
+        # Important: This for loop uses a 'class-global' count variable, as the loop is exited if the
+        # desired amount of blocks has been generated, but it shall start at the next call again at self.block_end_index
+        # It is increased by 1 every loop, so that every timestamp/row has the chance to be the latest in the block
+        for self.block_end_index in range(self.slice_start_cnt, self.tick_and_indicator_values.shape[0]):
 
-            # Norm all columns that are desired for batch norm
-            if True == self.batch_norm:
-                for ind in self._col_batch_norm_indices:
-                    _init_val = _slic[0, ind]  # _slic.loc[np.min(_slic.index),c]
+            # Pick a block-sized slice from the data array
+            new_block = copy.deepcopy(
+                self.tick_and_indicator_values[self.block_end_index-self.X_Block_lenght:self.block_end_index, :])
+
+            # Norm all columns that are desired for initial value normalization
+            # As it is an array, 'columns' are adressed using their indices
+            if True == self.initial_value_norm:
+                for ind in self._col_indices_initial_value_norm:
+                    _init_val = new_block[0, ind]
 
                     if 0.0 != _init_val:
-                        _slic[:, ind] /= _init_val
-                        _slic[:, ind] -= 1.0
+                        new_block[:, ind] /= _init_val
+                        new_block[:, ind] -= 1.0
                     else:
-                        _slic[:, ind] = 0.0
+                        new_block[:, ind] = 0.0
 
             # Norm the volume column to max == 1.0
-            if True == self.batch_norm_volume:
-                _vol_max = np.max(_slic[:, self._vol_col_index])
+            if True == self.limit_volume_value and 0 < self._vol_col_index:
+                _vol_max = np.max(new_block[:, self._vol_col_index])
                 if 0.0 < _vol_max:
-                    _slic[:, self._vol_col_index] /= _vol_max
+                    new_block[:, self._vol_col_index] /= _vol_max
 
-            # data_X.append(_slic)
-            data_X[_dx_cnt, :, :] = _slic
-            _dx_cnt += 1
+            # Place the block into the return data array
+            data_X[data_X_position, :, :] = new_block
+            data_X_position += 1
 
-            # if len(data_X) == _local_slice_size:
-            if _dx_cnt == _local_slice_size:
+            # If enough block have been created, break the for loop and proceed to returning the data_X
+            if data_X_position == block_length:
+                # Todo: Check if block_end_index is used twice (at start of next call)
                 break
 
-        data_X = data_X[:_dx_cnt, :, :]
+        # If it is too small
+        data_X = data_X[:data_X_position, :, :]
 
         data_X = np.nan_to_num(data_X, nan=0.0, posinf=0.0, neginf=0.0)
         # data_X = np.clip(data_X, -1000.0, 1000.0)
 
-        self.slice_start_cnt = self.i + 1
+        self.slice_start_cnt = self.block_end_index + 1
 
         return data_X
 
@@ -336,6 +436,7 @@ class YGainGenerator:
 
         self.slice_start_cnt += _local_slice_size
 
+        # According to y_type this means: type 0, 1, 2, 3 --> Todo important: Document this!
         return gainCat, dir_float, gains, _signals
 
 
@@ -396,7 +497,7 @@ class FileListToDataStream:
 
         # Init IndicatorCalculator
         self.ic = IndicatorCalculator(
-            self.shortspan, self.midspan, self.longspan, self.verbose)
+            self.shortspan, self.midspan, self.longspan, verbose=verbose)
 
         # Shuffle file list
         if self.shuffle:
