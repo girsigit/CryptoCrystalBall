@@ -267,6 +267,9 @@ class YDataGenerator:
         "rise_threshold": 0.25
     }
 
+    # This returns two maximum possible gains: One that could have been achieved in the last `gain_timespan` ticks,
+    # and the one that is possible in the next `gain_timespan` ticks if you would buy now.
+    # Usage: Buy if there has not been past gain but if there will be future gain. Sell the other way round.
     Y_DATA_TYPE_PAST_FUTURE_GAIN = 2
     PARAM_DICT_TEMPLATE_Y_DATA_TYPE_PAST_FUTURE_GAIN = {
         "dataType": Y_DATA_TYPE_PAST_FUTURE_GAIN,
@@ -275,13 +278,21 @@ class YDataGenerator:
         "derivation_ma_timespan": 48
     }
 
+    # Creation of trade signals (entry/exit points) out of direction and direction derivation information
+    # Entry signals are controlled by 3 parameters: `entr_thr1`, `entr_thr2`, `entr_thr3` -> Todo: Describe in detail
+    # Exit signals are controlled by 2 parameters: `exit_thr1`, `exit_thr2` -> Todo: Describe in detail
     Y_DATA_TYPE_TRADE_SIGNALS = 3
     PARAM_DICT_TEMPLATE_Y_DATA_TYPE_TRADE_SIGNALS = {
         "dataType": Y_DATA_TYPE_TRADE_SIGNALS,
         "ma_timespan": 48,
         "derivation_ma_timespan": 48,
         "direction_derivation_shift_span": 1,
-        "future_direction_shift_timespan": 24
+        "future_direction_shift_timespan": 24,
+        "entr_thr1": 0.9,
+        "entr_thr2": 0.8,
+        "entr_thr3": 0.0,
+        "exit_thr1": -0.5,
+        "exit_thr2:": 0.1
     }
 
     # Todo: Add y data type none to not init a generator
@@ -289,17 +300,11 @@ class YDataGenerator:
     def __init__(self,
                  tick_DF: pd.DataFrame,
                  slice_size,
-                 rise_threshold, fall_threshold,
-                 smooth_cnt, smooth_cnt2,
-                 lookback_cnt, y_lookahead_cnt, gain_lookaround_cnt,
+                 lookback_cnt,  gain_lookaround_cnt,
                  expected_gain_lookforward, entr_thr, entr_thr2, entr_thr3,
                  exit_thr, exit_thr2,
                  y_data_type):
         # Todo doku: y data is calculated right at class init
-
-        # Remove params:
-        # rise_threshold
-        # fall_threshold
 
         # Create a save copy of the open column
         self.yDataDF = copy.deepcopy(pd.DataFrame(tick_DF.loc[:, 'open']))
@@ -448,7 +453,7 @@ class YDataGenerator:
                 _direction_futureshifted = np.empty(self.direction.shape)
                 _direction_futureshifted[:] = 0.0
                 _direction_futureshifted[:-
-                                         future_direction_shift_timespan] = self.direction[self.future_direction_shift_timespan:]
+                                         future_direction_shift_timespan] = self.direction[future_direction_shift_timespan:]
 
                 # Calculate entry and exit signals based on three entry and two exit parameters
                 self.entry = (self.direction >= entr_thr1) & (
@@ -619,14 +624,13 @@ class YDataGenerator:
         return dataArray[startIndex:endIndex]
 
     def __create_block__(self, custom_slice_size=None):
-        gain_float = []
         if custom_slice_size is None:
             _local_slice_size = self.slice_size
         else:
             _local_slice_size = custom_slice_size
 
-        # Raise StopIteration if table is consumed
         # Todo: Depending on Y type, not working for 2!
+        # Raise StopIteration if table is consumed
         # if self.slice_start_cnt >= self.direction.shape[0]:
         #     logging.info(
         #         "Stop Iteration in Line 143 - Table consumed in y gen")
@@ -722,28 +726,38 @@ class YDataGenerator:
             # Todo: change to one
             returnTuple = None, None, gains, None
 
+        elif self.Y_DATA_TYPE_TRADE_SIGNALS == self.debugDataType["dataType"]:
+            entry_slice = self.__create_data_slice__(self.entry,
+                                                     self.slice_start_cnt,
+                                                     min([
+                                                         self.entry.shape[0], self.slice_start_cnt +
+                                                         _local_slice_size
+                                                     ])
+                                                     )
+
+            exit_slice = self.__create_data_slice__(self.exit,
+                                                    self.slice_start_cnt,
+                                                    min([
+                                                        self.exit.shape[0], self.slice_start_cnt +
+                                                        _local_slice_size
+                                                    ])
+                                                    )
+
+            # Placeholder for neutral (-> No entry and no exit signal) to allow use of categorical crossentropy loss on ML training
+            neutral_slice = np.logical_not(
+                np.logical_or(entry_slice, exit_slice))
+
+            signals = np.empty((entry_slice.shape[0], 3))
+            signals[:, 0] = entry_slice
+            signals[:, 1] = exit_slice
+            signals[:, 2] = neutral_slice
+
+            # Todo: Not return all 4
+            returnTuple = None, None, None, signals
+
+        # If another or no data type is specified (e.g. in live-predicing signals), just return an zeros array for compatibility reasons
         else:
-            logging.info("Wurst")
-            # # Todo: tanh and *1000 also at entry exit calc --> Merge it to one place
-            # dir_float = np.empty((_dir_slice.shape[0], 2))
-            # dir_float[:, 0] = np.tanh(_dir_slice * 1000.0)
-            # dir_float[:, 1] = np.tanh(_dir2nddev_slice)
-
-            # # Entry and exit signals - y-type 3
-            # _entry_slice = self.entry[self.slice_start_cnt: min(
-            #     [self.entry.shape[0], self.slice_start_cnt+_local_slice_size])]
-            # _exit_slice = self.exit[self.slice_start_cnt: min(
-            #     [self.exit.shape[0], self.slice_start_cnt+_local_slice_size])]
-
-            # _signals = np.empty((_entry_slice.shape[0], 3))
-            # _signals[:, 0] = _entry_slice
-            # _signals[:, 1] = _exit_slice
-            # # Placeholder for "nothing" to use binary crossentropy loss
-            # _signals[:, 2] = np.logical_not(
-            #     np.logical_or(_entry_slice, _exit_slice))
-
-            # Todo: _local_slice_size in comment has been renamed
-            # Increment the slice_start_cnt by the _local_slice_size for the next call
+            returnTuple = np.zeros((_local_slice_size))
 
         self.slice_start_cnt += _local_slice_size
 
@@ -804,10 +818,6 @@ class FileListToDataStream:
         self.X_generators = []
         self.y_generators = []
 
-        # Init one-hot encoder
-        # self.onehot_encoder = OneHotEncoder(sparse=False)
-        # self.onehot_encoder.fit_transform(np.array([-1, 0, 1]).reshape(-1, 1))
-
         # Init IndicatorCalculator
         self.ic = IndicatorCalculator(
             self.shortspan, self.midspan, self.longspan, verbose=verbose)
@@ -835,6 +845,7 @@ class FileListToDataStream:
         logging.info("Files left: " + str(len(self.fileList)))
 
     def __initGenerators__(self, fn, generator_batch_size):
+        # Todo: Pass a list of full paths to class
         _fullname = os.path.join(self.base_path, fn)
 
         _tickDF = pd.read_csv(_fullname, encoding="utf-8",
@@ -854,8 +865,8 @@ class FileListToDataStream:
 
         _xg = XBlockGenerator(
             _normedDF, generator_batch_size, self.X_lookback_cnt, self.batch_norm, self.batch_norm_volume)
-        _yg = YDataGenerator(_normedDF, generator_batch_size, self.rise_gain_threshold, self.fall_gain_threshold,
-                             self.smooth_cnt, self.smooth_cnt2, self.X_lookback_cnt, self.y_lookahead_cnt, self.gain_lookaround_cnt,
+        _yg = YDataGenerator(_normedDF, generator_batch_size,
+                             self.X_lookback_cnt, self.gain_lookaround_cnt,
                              self.expected_gain_lookforward, self.entr_thr, self.entr_thr2, self.entr_thr3, self.exit_thr, self.exit_thr2, self.y_type)
 
         return _xg, _yg
@@ -973,12 +984,6 @@ class FileListToDataStream:
             if self.shuffle:
                 _X_data, _y_data = sklearn.utils.shuffle(
                     _X_data, _y_data, random_state=self.random_seed)
-
-            # Done in cat creatino
-            # if 0 == self.y_type:
-            #     _integer_encoded = _y_data.reshape(len(_y_data), 1)
-            #     _y_data = self.onehot_encoder.transform(
-            #         _integer_encoded).astype(int)
 
         # End if everything is consumed
         if self.batch_size != _X_data.shape[0]:
