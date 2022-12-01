@@ -239,6 +239,8 @@ class YDataGenerator:
 
     As a price basis for calculating the y data, the `open` column of the input table `tick_DF` is used.
 
+    Todo: Describe param dicts and return values
+
     Requried constructor arguments:
     - `tick_DF`: An `pd.DataFrame` containing a time series of at tick data. Only the `open` column is used.
     - `todo`: some stuff
@@ -247,63 +249,65 @@ class YDataGenerator:
     Raises: StopIteration if the tick table is fully consumed
     '''
 
+    # Todo: Add a getter for the templates to avoid changing inside a program
+
+    # This returns the price's current direction (-> first derivation) and its changing rate (-> second derivation)
+    Y_DATA_TYPE_DIRECTION_FLOAT = 0
+    PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_FLOAT = {
+        "dataType": Y_DATA_TYPE_DIRECTION_FLOAT,
+        # The 'direction_ma_timespan' parameter describes how fast the direction information follows price changes
+        "direction_ma_timespan": 200,
+        # The 'derivation_ma_timespan' parameter describes how fast the derivation information direction changes
+        "derivation_ma_timespan": 100,
+        # The 'direction_derivation_shift_span' parameter sets a shifting of the direction and derivation information
+        "direction_derivation_shift_span": 0
+    }
+
     # This returns the price's current direction in a categorical manner: falling, neutral, rising
     # The categories are data type `int`: falling:0, neutral:1, rising:2
     # The categories are determined by the two `float` parameters `fall_threshold` and `rise_threshold`
-    Y_DATA_TYPE_DIRECTION_CATEGORICAL = 0
+    Y_DATA_TYPE_DIRECTION_CATEGORICAL = 1
     PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_CATEGORICAL = {
         "dataType": Y_DATA_TYPE_DIRECTION_CATEGORICAL,
-        "ma_timespan": 48,
-        "derivation_ma_timespan": 48,
-        "direction_derivation_shift_span": 1,
-        "fall_threshold": -0.25,
-        "rise_threshold": 0.25
-    }
-
-    # This returns the price's current direction (-> first derivation) and its changing rate (-> second derivation)
-    Y_DATA_TYPE_DIRECTION_FLOAT = 1
-    PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_FLOAT = {
-        "dataType": Y_DATA_TYPE_DIRECTION_FLOAT,
-        "ma_timespan": 48,
-        "derivation_ma_timespan": 48,
-        "direction_derivation_shift_span": 1
-    }
-
-    # This returns two maximum possible gains: One that could have been achieved in the last `gain_timespan` ticks,
-    # and the one that is possible in the next `gain_timespan` ticks if you would buy now.
-    # Usage: Buy if there has not been past gain but if there will be future gain. Sell the other way round.
-    Y_DATA_TYPE_PAST_FUTURE_GAIN = 2
-    PARAM_DICT_TEMPLATE_Y_DATA_TYPE_PAST_FUTURE_GAIN = {
-        "dataType": Y_DATA_TYPE_PAST_FUTURE_GAIN,
-        "gain_timespan": 12,
-        "ma_timespan": 48,
-        "derivation_ma_timespan": 48
+        # The 'direction_ma_timespan' parameter describes how fast the direction information follows price changes
+        "direction_ma_timespan": 200,
+        # The 'derivation_ma_timespan' parameter describes how fast the derivation information direction changes
+        "derivation_ma_timespan": 100,
+        # The 'direction_derivation_shift_span' parameter sets a shifting of the direction and derivation information
+        "direction_derivation_shift_span": 0,
+        "fall_threshold": -0.2,
+        "rise_threshold": 0.1
     }
 
     # Creation of trade signals (entry/exit points) out of direction and direction derivation information
     # Entry signals are controlled by 3 parameters: `entr_thr1`, `entr_thr2`, `entr_thr3` -> Todo: Describe in detail
     # Exit signals are controlled by 2 parameters: `exit_thr1`, `exit_thr2` -> Todo: Describe in detail
-    Y_DATA_TYPE_TRADE_SIGNALS = 3
+    Y_DATA_TYPE_TRADE_SIGNALS = 2
     PARAM_DICT_TEMPLATE_Y_DATA_TYPE_TRADE_SIGNALS = {
         "dataType": Y_DATA_TYPE_TRADE_SIGNALS,
-        "ma_timespan": 48,
-        "derivation_ma_timespan": 48,
-        "direction_derivation_shift_span": 1,
+        "direction_ma_timespan": 200,
+        "derivation_ma_timespan": 100,
+        "direction_derivation_shift_span": 0,
         "future_direction_shift_timespan": 24,
         "entr_thr1": 0.9,
         "entr_thr2": 0.8,
         "entr_thr3": 0.0,
         "exit_thr1": -0.5,
-        "exit_thr2:": 0.1
+        "exit_thr2": 0.1
+    }
+
+    # This returns two maximum possible gains: One that could have been achieved in the last `gain_timespan` ticks,
+    # and the one that is possible in the next `gain_timespan` ticks if you would buy now.
+    # Usage: Buy if there has not been past gain but if there will be future gain. Sell the other way round.
+    Y_DATA_TYPE_PAST_FUTURE_GAIN = 3
+    PARAM_DICT_TEMPLATE_Y_DATA_TYPE_PAST_FUTURE_GAIN = {
+        "dataType": Y_DATA_TYPE_PAST_FUTURE_GAIN,
+        "gain_timespan": 12,
+        "direction_ma_timespan": 48,
+        "derivation_ma_timespan": 48
     }
 
     # Todo: Add y data type none to not init a generator
-    # def __init__(self,
-    #              tick_and_indicator_DF: pd.DataFrame,
-    #              generator_batch_size: int,
-    #              X_Block_lenght: int,
-    #              initial_value_norm: bool = True,
-    #              limit_volume_value: bool = True):
 
     def __init__(self,
                  tick_DF: pd.DataFrame,
@@ -318,14 +322,6 @@ class YDataGenerator:
         # Create a save copy of the open column
         self.yDataDF = copy.deepcopy(pd.DataFrame(tick_DF.loc[:, 'open']))
 
-        # Todo: As a parameter
-        # if self.Y_DATA_TYPE_DIRECTION_CATEGORICAL == y_data_type:
-        #     self.y_type_dict = self.PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_CATEGORICAL
-        # elif self.Y_DATA_TYPE_DIRECTION_FLOAT == y_data_type:
-        #     self.y_type_dict = self.PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_FLOAT
-        # elif self.Y_DATA_TYPE_PAST_FUTURE_GAIN == y_data_type:
-        #     self.y_type_dict = self.PARAM_DICT_TEMPLATE_Y_DATA_TYPE_PAST_FUTURE_GAIN
-
         self.slice_size = generator_batch_size
         self.slice_start_index = lookback_cnt
 
@@ -338,20 +334,21 @@ class YDataGenerator:
         if self.Y_DATA_TYPE_DIRECTION_FLOAT == self.y_type_dict["dataType"] or self.Y_DATA_TYPE_DIRECTION_CATEGORICAL == self.y_type_dict["dataType"] or self.Y_DATA_TYPE_TRADE_SIGNALS == self.y_type_dict["dataType"]:
             # Check if all necessary values are present in the y-type descriptor dict
             necessary_values = [
-                "ma_timespan", "derivation_ma_timespan", "direction_derivation_shift_span"]
+                "direction_ma_timespan", "derivation_ma_timespan", "direction_derivation_shift_span"]
             for nev in necessary_values:
                 if not nev in self.y_type_dict.keys():
                     raise KeyError(
-                        f"{nev} has to be defined in y-type descriptor dict")
+                        f"'{nev}' has to be defined in y-type descriptor dict")
 
             # Get the values from the dict
-            ma_timespan = int(self.y_type_dict["ma_timespan"])
+            direction_ma_timespan = int(
+                self.y_type_dict["direction_ma_timespan"])
             derivation_ma_timespan = int(
                 self.y_type_dict["derivation_ma_timespan"])
             direction_derivation_shift_span = int(
                 self.y_type_dict["direction_derivation_shift_span"])
 
-            assert 0 < ma_timespan
+            assert 0 < direction_ma_timespan
             assert 0 < derivation_ma_timespan
 
             # Calculate moving direction of price and its change rate
@@ -360,7 +357,7 @@ class YDataGenerator:
             # Only the 3. and 4. element are used, which are the smoothed first derivation and the 'normal' second one
             _, _, direction, directionDerivation = self.calculateShiftedDerivations(
                 self.yDataDF.values.flatten(),
-                ma_timespan,
+                direction_ma_timespan,
                 derivation_ma_timespan)  # Todo : np.squeeze instead of flatten?
 
             # All nan values shall simply be 0
@@ -382,6 +379,8 @@ class YDataGenerator:
             # Class-wide storage of direction data
             # It is possible to shift the direction and the directionDerivation array to acquire value from the future (e.g. the dir/derv in 24 hours)
             if 0 < direction_derivation_shift_span:
+                logging.debug(
+                    f"it has been shifted by {direction_derivation_shift_span}")
                 self.direction = np.zeros(direction.shape)
                 self.direction[:-direction_derivation_shift_span] = direction[direction_derivation_shift_span:]
                 self.direction = np.nan_to_num(self.direction, nan=0)
@@ -407,7 +406,7 @@ class YDataGenerator:
                 for nev in necessary_values:
                     if not nev in self.y_type_dict.keys():
                         raise KeyError(
-                            f"{nev} has to be defined in y-type descriptor dict")
+                            f"'{nev}' has to be defined in y-type descriptor dict")
 
                 fall_threshold = float(self.y_type_dict["fall_threshold"])
                 rise_threshold = float(self.y_type_dict["rise_threshold"])
@@ -441,7 +440,7 @@ class YDataGenerator:
                 for nev in necessary_values:
                     if not nev in self.y_type_dict.keys():
                         raise KeyError(
-                            f"{nev} has to be defined in y-type descriptor dict")
+                            f"'{nev}' has to be defined in y-type descriptor dict")
 
                 # Get the values from the dict
                 future_direction_shift_timespan = int(
@@ -465,18 +464,19 @@ class YDataGenerator:
                     _direction_futureshifted <= exit_thr2)
 
         # Data type Y_DATA_TYPE_PAST_FUTURE_GAIN
-        if self.Y_DATA_TYPE_DIRECTION_FLOAT == self.y_type_dict["dataType"]:
+        if self.Y_DATA_TYPE_PAST_FUTURE_GAIN == self.y_type_dict["dataType"]:
             # Check if all necessary values are present in the y-type descriptor dict
             necessary_values = [
-                "gain_timespan", "ma_timespan", "derivation_ma_timespan"]
+                "gain_timespan", "direction_ma_timespan", "derivation_ma_timespan"]
             for nev in necessary_values:
                 if not nev in self.y_type_dict.keys():
                     raise KeyError(
-                        f"{nev} has to be defined in y-type descriptor dict")
+                        f"'{nev}' has to be defined in y-type descriptor dict")
 
             # Get the values from the dict
             gain_timespan = float(self.y_type_dict["gain_timespan"])
-            ma_timespan = int(self.y_type_dict["ma_timespan"])
+            direction_ma_timespan = int(
+                self.y_type_dict["direction_ma_timespan"])
             derivation_ma_timespan = int(
                 self.y_type_dict["derivation_ma_timespan"])
 
@@ -525,11 +525,11 @@ class YDataGenerator:
             # Smooth the gain out and calculate its derivation
             self.max_past_gain_ma, _, self.max_past_gain_dir, _ = self.calculateShiftedDerivations(
                 max_past_gain,
-                ma_timespan,
+                direction_ma_timespan,
                 derivation_ma_timespan)
             self.max_future_gain_ma, _, self.max_future_gain_dir, _ = self.calculateShiftedDerivations(
                 max_future_gain,
-                ma_timespan,
+                direction_ma_timespan,
                 derivation_ma_timespan)
 
             # Replace all nan values just by zero
@@ -576,8 +576,6 @@ class YDataGenerator:
         - `derivation_first_shifted_ma`: A moving average of the first derivation data, shifted to its center
         - `derivation_second`: The second derivation of `shifted_ma`, or more precise, the first derivation of `derivation_first_shifted_ma`. Attention: It is calculated as percent value (now-prev)/prev.
         '''
-
-        logging.debug(f"ma_timespan:{ma_timespan}")
 
         # Calculate the moving average of the input data
         ma = talib.MA(input_array.astype(float), timeperiod=ma_timespan)
@@ -754,6 +752,8 @@ class YDataGenerator:
             signals[:, 1] = exit_slice
             signals[:, 2] = neutral_slice
 
+            # Todo: Change array type to int
+
             returnArray = signals
 
         # If another or no data type is specified (e.g. in live-predicing signals), just return an zeros array for compatibility reasons
@@ -767,6 +767,22 @@ class YDataGenerator:
 
 
 class FileListToDataStream:
+    '''
+    The `FileListToDataStream` class is used to generate a stream of `X-Blocks` and their according `y-data` out of a list of OHLCV (Open/High/Low/Close/Volume) .csv files.
+    In short, `X-Blocks` are a slice of data from the past, where `y-data` contains information about future gain / trade signals. For detailled
+    information, please take a look at the description of the classes `XBlockGenerator` and `YDataGenerator`.
+
+
+
+    Requried constructor arguments:
+    - `fileList`: A `list` of `string` with complete paths to the tick data (OHLCV) files.
+    - `todo`: some stuff
+
+
+    Returns: Todo: Two  generators ??
+    Raises: Todo: ?? StopIteration if the tick table is fully consumed
+    '''
+
     def __init__(self, fileList, batch_size,
                  base_path, smooth_cnt, smooth_cnt2,
                  X_Block_lenght, y_lookahead_cnt, gain_lookaround_cnt, y_type, parallel_generators=4,
@@ -850,7 +866,6 @@ class FileListToDataStream:
         # self.entr_thr3 = entr_thr3  # Todo: Move to y descr dict
         # self.exit_thr = exit_thr  # Todo: Move to y descr dict
         # self.exit_thr2 = exit_thr2  # Todo: Move to y descr dict
-        
 
         # 0 for categorical, 1 for float, 2 for gain lookaround, 3 for entry / exit
         # Todo: Remove this var and include into dict

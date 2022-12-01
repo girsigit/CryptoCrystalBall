@@ -2,7 +2,7 @@
 
 The `DataStreamCreator` class consists of several sub-classes for generating tick data frames (X-blocks), some future price or trade information for training (y data) and one for converting a file list of OHLCV csv data into a data stream of these two informations.
 
-# XBlockGenerator
+# **XBlockGenerator**
 The `XBlockGenerator` class is used to generate time-frame slices (= X-blocks) out of a time series table of tick and indicator data.
 For this task, an input `pd.DataFrame` `tickAndIndicatorDF` is processed row by row.
 It is called 'X' because its purpose is to be used as input data for machine learning networks (== X-data).
@@ -11,10 +11,9 @@ Every X-block is created by using a specific amount of table rows, defined by th
 If the tick data is in hours and `X_lookback_cnt=12`, the generator would return slices of 12 hours.
 The step size between the X-blocks is 1, so the resulting DFs in the example would be: 00:00-11:00, 01:00-12:00, 02:00-13:00, ...
 
-## **Todo: Add images of X-Frames**
+#### **Todo: Add images of X-Frames******
 
-## **Todo: Add code snippet**
-
+#### **Todo: Add code snippet**
 
 ### Requried constructor arguments:
 - `tick_and_indicator_DF`: An `pd.DataFrame` containing a time series of tick and indicator data. This table is normally created using the `IndicatorCalculator` class.
@@ -28,7 +27,7 @@ A generator, X-blocks can be acquired using next()
 ### Raises
 StopIteration if the tick and indicator table is fully consumed
 
-# YDataGenerator
+# **YDataGenerator**
 
 The `YDataGenerator` class is used to generate future information for training out of a time series table of tick and indicator data.
 This can for example be the assets relative price or gain in 24 hours, the direction of movement, or trade entry and exit signals.
@@ -42,6 +41,70 @@ Here, it can be generated for training purposes using historical data.
 
 As a price basis for calculating the y data, the `open` column of the input table `tick_DF` is used.
 
+The y data generator can be structure into 4 sections, namely the 4 different types of signals that can be generated, depending on the strategy used in machine learning training.
+
+A Jupyter notebook containing example code for generating the signals can be found under [**YDataGeneratorExamples.ipynb**](JupyterDocker/notebooks/YDataGeneratorExamples.ipynb).
+
+---
+### Y_DATA_TYPE_DIRECTION_FLOAT
+
+This data type generates a direction signal of price movement and its derivation.
+
+![Chart image](../Documentation/Images/Direction_over_open_price_values.svg)
+![Chart image](../Documentation/Images/Direction_Derivation_over_open_price_values.svg)
+
+ It takes the following parameters:
+- `direction_ma_timespan`: Default 200, this parameter describes how fast the direction information follows price changes
+- `derivation_ma_timespan`: Default 100, this parameter describes how fast the derivation information direction changes
+- `direction_derivation_shift_span`: Default 0, this parameter sets a shifting of the direction and derivation information
+
+The output of this data type is the direction of price movement and its derivation: `np.array [direction, directionDerivation]`
+
+---
+### Y_DATA_TYPE_DIRECTION_CATEGORICAL
+
+This data type generates a direction signal of price movement and its derivation. 
+
+![Chart image](../Documentation/Images/Integer_direction_category_over_open_price_values_-_Colored_view.svg)
+
+It takes the following parameters:
+- `direction_ma_timespan`: Default 200, this parameter describes how fast the direction information follows price changes
+- `derivation_ma_timespan`: Default 100, this parameter describes how fast the derivation information direction changes
+- `direction_derivation_shift_span`: Default 0, this parameter sets a shifting of the direction and derivation information
+- `fall_threshold`: Default -0.2, this parameter set a limit for the direction value from which it shall be considered rising. The derivation of the direction has also to be over 0 to assume rising.
+- `rise_threshold`: Default 0.1, this parameter set a limit for the direction value from which it shall be considered falling
+
+The output of this data type is the integer category of the price movement based on its direction info (from the previous Y_DATA_TYPE_DIRECTION_FLOAT): `np.array [integerCategory]`
+
+---
+### Y_DATA_TYPE_TRADE_SIGNALS
+
+
+
+This is the most sophisticated data generator based on the direction of price movement and its derivation. It uses three entry and two exit thresholds to generate trade signals whether one should enter (-> buy) or exit (-> sell). As the future is known in the train data generation step, very precise entry and exit signals can be generated. These signals can then be trained into a machine learning network.
+
+As these parameters are rather sensitve and depend on the type of tick data (crypto, stock, long/short-term, ...), there will be a notebook for finding an optimum of them based on a training data set. (*Todo: Add the finder notebook*)
+
+
+![Chart image](../Documentation/Images/Trade_signals_plotted_on_open_price_values.svg)
+
+
+It takes the following parameters:
+- `direction_ma_timespan`: Default 200, this parameter describes how fast the direction information follows price changes
+- `derivation_ma_timespan`: Default 100, this parameter describes how fast the derivation information direction changes
+- `direction_derivation_shift_span`: Default 0, this parameter sets a shifting of the direction and derivation information
+- `future_direction_shift_timespan`: Default 24, this parameter determines from which future timestep the information is used to generate signals. (-> Look if a trade would be profitable)
+- `entr_thr1`, `entr_thr2`, `entr_thr3`: Thresholds for generating entry signals based on this equation: `(direction >= entr_thr1) & (_direction_futureshifted >= entr_thr2) & (directionDerivation >= entr_thr3)`
+- `exit_thr1`, `exit_thr2`: Thresholds for generating exit signals based on this equation: `(direction <= exit_thr1) & (_direction_futureshifted <= exit_thr2)`
+
+The output of this data type is the one-hot-encoded category of the price movement: `np.array [entry, exit, neutral]`
+
+---
+### Y_DATA_TYPE_PAST_FUTURE_GAIN
+
+Todo: Test and write it
+
+---
 Requried constructor arguments:
 - `tick_DF`: An `pd.DataFrame` containing a time series of at tick data. Only the `open` column is used.
 - `todo`: some stuff

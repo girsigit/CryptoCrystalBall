@@ -7,7 +7,6 @@ USER root
 # Build the Ta-Lib library
 WORKDIR /talib
 RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && tar -xzvf ta-lib-0.4.0-src.tar.gz
-  # !unzip /content/drive/MyDrive/Privat/Crypto/talibmaked.zip -d /
 WORKDIR /talib/ta-lib
 RUN ./configure --prefix=/usr && make && make install
 
