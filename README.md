@@ -19,7 +19,7 @@ This is the part for the people who do not want to read much text! So whats the 
 So whats the way to this goal?
 
 1. Calculate financial indicators on a given training OHLCV dataset. --> [IndicatorCalculator](IndicatorCalculator/README.md)
-2. Generate pairs of past ticks data `X-Blocks` and future trade signals `y-data` out of the OHLCV + Indicator training data. --> [XBlockGenerator + YDataGenerator](DataStreamCreator/README.md)
+2. Generate pairs of past tick data `X-Blocks` and future trade signals `y-data` out of the OHLCV + Indicator training data. --> [XBlockGenerator + YDataGenerator](DataStreamCreator/README.md)
 3. Merge them into a shuffled stream of data --> [DataStreamCreator, Todo: write Doku](DataStreamCreator/README.md)
 4. Feed the stream to a neural network, which shall learn to predict the signals out of an `X-Block`. --> [Todo: Add the training notebook and the model zoo](nothing.md)
 5. Evaluate the model to check if the signals are right.  --> [Todo: Add the testing notebook](nothing.md)

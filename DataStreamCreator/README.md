@@ -1,5 +1,3 @@
-## **Todo: There should be some doku...**
-
 The `DataStreamCreator` class consists of several sub-classes for generating tick data frames (X-blocks), some future price or trade information for training (y data) and one for converting a file list of OHLCV csv data into a data stream of these two informations.
 
 # **XBlockGenerator**
@@ -8,22 +6,39 @@ For this task, an input `pd.DataFrame` `tickAndIndicatorDF` is processed row by 
 It is called 'X' because its purpose is to be used as input data for machine learning networks (== X-data).
 
 Every X-block is created by using a specific amount of table rows, defined by the `int` parameter `X_Block_lenght`.
-If the tick data is in hours and `X_lookback_cnt=12`, the generator would return slices of 12 hours.
+If the tick data is in hours and `X_Block_lenght=12`, the generator would return slices of 12 hours.
 The step size between the X-blocks is 1, so the resulting DFs in the example would be: 00:00-11:00, 01:00-12:00, 02:00-13:00, ...
 
-#### **Todo: Add images of X-Frames******
+The big advantage of using the `XBlockGenerator` instead of just feeding the training table data is that nearly every timestamp in the dataset is used as 'now' time in the training data. With 
+`X_Block_lenght=12`, from the example table in [BTC-USDT.csv](DemoData/BTC-USDT.csv) containing 49.403 timesteps 49.403-48=49.355 blocks can be generated. As every X-Block contains 48 timesteps, a total amount of 49.355*48 = **2.369.040** time slices are fed to training the network. 
 
-#### **Todo: Add code snippet**
+An analogy to this process is if you zoom in on the hourly chart of the BTC-USDT price to show 48 hours, an then scroll forward for one hour step by step and take a look / a screenshot a every step.
 
+---
+### Example charts for X-Blocks
+
+In these example charts, only the open price column is plotted to keep the charts tidy. The behaviour for all other columns (other price data and indicator) is the same, as the X-Block generator slices on a time-basis and preserves the feature dimension.
+
+The `X_Block_lenght` is set to `48` in the examples, so on a hourly tick basis, every X-Block covers 2 days. The Jupyter notebook used to generate these examples can be found under [**XBlockGeneratorExample.ipynb**](JupyterDocker/notebooks/XBlockGeneratorExample.ipynb).
+
+
+![Chart image](../Documentation/Images/First_X-block_open_price_column_only.svg)
+
+The following chart shows first 20 X-Blocks. To visualize the shifting process, a black dot is added, which is always plotted at the same absolute timestamp.
+
+![Chart image](../Documentation/Images/First_20_X-blocks_open_price_column_only.svg)
+
+
+---
 ### Requried constructor arguments:
 - `tick_and_indicator_DF`: An `pd.DataFrame` containing a time series of tick and indicator data. This table is normally created using the `IndicatorCalculator` class.
-- `generator_batch_size`: An `int` variable defining how many X-Blocks the generator shall return on each next() call.
+- `generator_batch_size`: An `int` variable defining how many X-Blocks the generator shall return on each `next()` call.
 - `X_Block_lenght`: This `int` variable defines how many timestamps each X-Block shall cover. Former called `X_lookback_cnt`.
 - `initial_value_norm`: A `bool` value to switch if all indicators included in `Todo` shall be normalized based on the first value in each X-block. This is then done for each indicator individually, the first value is then 0.0, all following are relative to it. Used for volume inidcators with a large spread. `True` by default.
 - `limit_volume_value`: A `bool` value to switch if the volume column shall be scaled to a maximum value of `1.0`. This can be helpful as the volume may have a large absolute value spread. `True` by default.
 
 ### Returns
-A generator, X-blocks can be acquired using next()
+A generator, X-blocks can be acquired using `next()`
 ### Raises
 StopIteration if the tick and indicator table is fully consumed
 
@@ -45,7 +60,23 @@ The y data generator can be structure into 4 sections, namely the 4 different ty
 
 A Jupyter notebook containing example code for generating the signals can be found under [**YDataGeneratorExamples.ipynb**](JupyterDocker/notebooks/YDataGeneratorExamples.ipynb).
 
+
 ---
+### Requried constructor arguments
+- `tick_DF`: An `pd.DataFrame` containing a time series of at tick data. Only the `open` column is used.
+- `todo`: some stuff
+
+
+---
+### Returns
+A generator, y data can be acquired using `next()`
+
+
+---
+### Raises
+StopIteration if the tick table is fully consumed
+
+
 ### Y_DATA_TYPE_DIRECTION_FLOAT
 
 This data type generates a direction signal of price movement and its derivation.
@@ -104,10 +135,4 @@ The output of this data type is the one-hot-encoded category of the price moveme
 
 Todo: Test and write it
 
----
-Requried constructor arguments:
-- `tick_DF`: An `pd.DataFrame` containing a time series of at tick data. Only the `open` column is used.
-- `todo`: some stuff
 
-Returns: A generator, y data can be acquired using next()
-Raises: StopIteration if the tick table is fully consumed
