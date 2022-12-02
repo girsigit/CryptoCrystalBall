@@ -239,13 +239,13 @@ class YDataGenerator:
 
     As a price basis for calculating the y data, the `open` column of the input table `tick_DF` is used.
 
-    Todo: Describe param dicts and return values
-
     Requried constructor arguments:
     - `tick_DF`: An `pd.DataFrame` containing a time series of at tick data. Only the `open` column is used.
-    - `todo`: some stuff
+    - `generator_batch_size`: An `int` variable defining how many y data slements the generator shall return on each next() call.
+    - `first_batch_slice_start_index`: A `int` value defining the start index of the first batch. This is required to match the process of the `XBlockGenerator`, which has to start at an index more than 0 to look back.
+    - `y_type_dict`: A `dict` which defines which type of y data shall be returned. As a starting point, the templates defines in this class can be used: `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_FLOAT`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_CATEGORICAL`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_TRADE_SIGNALS`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_PAST_FUTURE_GAIN`. Detailled information can be found in the README file.
 
-    Returns: A generator, y data can be acquired using next()
+    Returns: A generator, y data can be acquired using `next()`. A detailed description of the y data structure can be found in the README file. 
     Raises: StopIteration if the tick table is fully consumed
     '''
 
@@ -312,7 +312,7 @@ class YDataGenerator:
     def __init__(self,
                  tick_DF: pd.DataFrame,
                  generator_batch_size: int,
-                 lookback_cnt: int,  # Todo: Rename
+                 first_batch_slice_start_index: int,
                  y_type_dict: dict):
         # Todo doku: y data is calculated right at class init
 
@@ -323,7 +323,7 @@ class YDataGenerator:
         self.yDataDF = copy.deepcopy(pd.DataFrame(tick_DF.loc[:, 'open']))
 
         self.slice_size = generator_batch_size
-        self.slice_start_index = lookback_cnt
+        self.batch_slice_start_index = first_batch_slice_start_index
 
         self.i = 0
 
@@ -640,22 +640,20 @@ class YDataGenerator:
         # Prepare a return array, it is filled in the if statements depending on y type
         returnArray = None
 
-        # Todo important: check if this is true that way that a slice with self.slice_start_index shall be returned (maybe yes because it is a slice of the total dataset, e.g. 5 entries)
-
         # Return statements for different y data types
         if self.Y_DATA_TYPE_DIRECTION_FLOAT == self.y_type_dict["dataType"]:
             direction_slice = self.__create_data_slice__(self.direction,
-                                                         self.slice_start_index,
+                                                         self.batch_slice_start_index,
                                                          min([
-                                                             self.direction.shape[0], self.slice_start_index +
+                                                             self.direction.shape[0], self.batch_slice_start_index +
                                                              _local_slice_size
                                                          ])
                                                          )
 
             directionDerivation_slice = self.__create_data_slice__(self.directionDerivation,
-                                                                   self.slice_start_index,
+                                                                   self.batch_slice_start_index,
                                                                    min([
-                                                                       self.direction.shape[0], self.slice_start_index +
+                                                                       self.direction.shape[0], self.batch_slice_start_index +
                                                                        _local_slice_size
                                                                    ])
                                                                    )
@@ -670,9 +668,9 @@ class YDataGenerator:
 
         elif self.Y_DATA_TYPE_DIRECTION_CATEGORICAL == self.y_type_dict["dataType"]:
             category_slice = self.__create_data_slice__(self.directionCategory,
-                                                        self.slice_start_index,
+                                                        self.batch_slice_start_index,
                                                         min([
-                                                            self.directionCategory.shape[0], self.slice_start_index +
+                                                            self.directionCategory.shape[0], self.batch_slice_start_index +
                                                             _local_slice_size
                                                         ])
                                                         )
@@ -683,33 +681,33 @@ class YDataGenerator:
 
             # Create slices
             max_past_gain_ma_slice = self.__create_data_slice__(self.max_past_gain_ma,
-                                                                self.slice_start_index,
+                                                                self.batch_slice_start_index,
                                                                 min([
-                                                                    self.max_past_gain_ma.shape[0], self.slice_start_index +
+                                                                    self.max_past_gain_ma.shape[0], self.batch_slice_start_index +
                                                                     _local_slice_size
                                                                 ])
                                                                 )
 
             max_future_gain_ma_slice = self.__create_data_slice__(self.max_future_gain_ma,
-                                                                  self.slice_start_index,
+                                                                  self.batch_slice_start_index,
                                                                   min([
-                                                                      self.max_future_gain_ma.shape[0], self.slice_start_index +
+                                                                      self.max_future_gain_ma.shape[0], self.batch_slice_start_index +
                                                                       _local_slice_size
                                                                   ])
                                                                   )
 
             max_past_gain_dir_slice = self.__create_data_slice__(self.max_past_gain_dir,
-                                                                 self.slice_start_index,
+                                                                 self.batch_slice_start_index,
                                                                  min([
-                                                                     self.max_past_gain_dir.shape[0], self.slice_start_index +
+                                                                     self.max_past_gain_dir.shape[0], self.batch_slice_start_index +
                                                                      _local_slice_size
                                                                  ])
                                                                  )
 
             max_future_gain_dir_slice = self.__create_data_slice__(self.max_future_gain_dir,
-                                                                   self.slice_start_index,
+                                                                   self.batch_slice_start_index,
                                                                    min([
-                                                                       self.max_future_gain_dir.shape[0], self.slice_start_index +
+                                                                       self.max_future_gain_dir.shape[0], self.batch_slice_start_index +
                                                                        _local_slice_size
                                                                    ])
                                                                    )
@@ -728,17 +726,17 @@ class YDataGenerator:
 
         elif self.Y_DATA_TYPE_TRADE_SIGNALS == self.y_type_dict["dataType"]:
             entry_slice = self.__create_data_slice__(self.entry,
-                                                     self.slice_start_index,
+                                                     self.batch_slice_start_index,
                                                      min([
-                                                         self.entry.shape[0], self.slice_start_index +
+                                                         self.entry.shape[0], self.batch_slice_start_index +
                                                          _local_slice_size
                                                      ])
                                                      )
 
             exit_slice = self.__create_data_slice__(self.exit,
-                                                    self.slice_start_index,
+                                                    self.batch_slice_start_index,
                                                     min([
-                                                        self.exit.shape[0], self.slice_start_index +
+                                                        self.exit.shape[0], self.batch_slice_start_index +
                                                         _local_slice_size
                                                     ])
                                                     )
@@ -752,16 +750,14 @@ class YDataGenerator:
             signals[:, 1] = exit_slice
             signals[:, 2] = neutral_slice
 
-            # Todo: Change array type to int
-
-            returnArray = signals
+            returnArray = signals.astype(int)
 
         # If another or no data type is specified (e.g. in live-predicing signals), just return an zeros array for compatibility reasons
         else:
             returnArray = np.zeros((_local_slice_size))
 
-        # Increase the start index for the next call
-        self.slice_start_index += _local_slice_size
+        # Increase the batch slice start index for the next call
+        self.batch_slice_start_index += _local_slice_size
 
         return returnArray
 

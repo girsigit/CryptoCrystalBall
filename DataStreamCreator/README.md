@@ -60,16 +60,17 @@ The y data generator can be structure into 4 sections, namely the 4 different ty
 
 A Jupyter notebook containing example code for generating the signals can be found under [**YDataGeneratorExamples.ipynb**](JupyterDocker/notebooks/YDataGeneratorExamples.ipynb).
 
-
 ---
 ### Requried constructor arguments
 - `tick_DF`: An `pd.DataFrame` containing a time series of at tick data. Only the `open` column is used.
-- `todo`: some stuff
+- `generator_batch_size`: An `int` variable defining how many y data slements the generator shall return on each next() call.
+- `first_batch_slice_start_index`: A `int` value defining the start index of the first batch. This is required to match the process of the `XBlockGenerator`, which has to start at an index more than 0 to look back.
+- `y_type_dict`: A `dict` which defines which type of y data shall be returned. As a starting point, the templates defines in this class can be used: `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_FLOAT`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_CATEGORICAL`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_TRADE_SIGNALS`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_PAST_FUTURE_GAIN`. Detailled information can be found in the README file.
 
 
 ---
 ### Returns
-A generator, y data can be acquired using `next()`
+A generator, y data can be acquired using `next()`. A detailed description of the y data structure can be found in the README file.
 
 
 ---
