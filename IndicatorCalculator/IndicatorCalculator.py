@@ -22,14 +22,16 @@ class IndicatorCalculator():
     The columns of the input table have to be named as following:
     - open, high, low, close, volume; The timestamp is the index of the table.
 
-    Requried constructor arguments:
+    ---
+    ### Requried constructor arguments
     - `shortspan`: An `int` for calculting indicators over a short time period (--> fast changing indicators, e.g. 6)
     - `midspan`: An `int` for calculting indicators over a middle time period (--> in-between changing indicators, e.g. 24)
     - `longspan`: An `int` for calculting indicators over a long time period (--> slow changing indicators, e.g. 120)
 
-    Optional constructor arguments:
+    ---
+    ### Optional constructor arguments
     - `verbose`: A `bool` flag for activating printing of additional information, like table shapes. `False` by default.
-    - `dropna`: A `bool` flag if rows containing `NaN` values shall be dropped. `False` by default, `NaN`s are replaced by `0`.
+    - `dropna`: A `bool` flag if rows containing `NaN` values shall be dropped. `False` by default, `NaN`s are replaced by `0.0`.
     '''
 
     def __init__(self, shortspan: int, midspan: int, longspan: int, **kwargs):
@@ -87,6 +89,8 @@ class IndicatorCalculator():
             ohlcvTbl,
             self.CalcCycTable(ohlcvTbl)
         ], axis=1)
+
+        # Todo important: There will be an error on concing the tables based on three timespans, as for example c_HT_TRENDLINE 	c_SAR_0005_005 	c_SAR_002_02 from CalcOverlapTable are calced three times
 
         # Calculate period-sensitive indicators for each timespan
         for timeSpan in [self.SHORTSPAN, self.MIDSPAN, self.LONGSPAN]:
@@ -584,6 +588,7 @@ class IndicatorCalculator():
             vals = patternTable.iloc[:, ci].values
             maxAbsVal = np.max(np.abs(vals))
 
+            # Todo: FutureWarning: In a future version, `df.iloc[:, i] = newvals` will attempt to set the values inplace instead of always setting a new array.
             if 0 < maxAbsVal:
                 patternTable.iloc[:, ci] /= (1.0 * maxAbsVal)
             else:

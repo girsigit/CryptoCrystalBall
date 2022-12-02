@@ -237,7 +237,7 @@ class YDataGenerator:
     The X-Block contains data from the past, which is known in a live application, while the Y data is unknown in the live application, and therefore has to be predicted.
     Here, it can be generated for training purposes using historical data.
 
-    As a price basis for calculating the y data, the `open` column of the input table `tick_DF` is used.
+    As a price basis for calculating the y data, the `open` column of the input table `tick_DF` is used. The y data is calculated at the initialization of the class.
 
     Requried constructor arguments:
     - `tick_DF`: An `pd.DataFrame` containing a time series of at tick data. Only the `open` column is used.
@@ -314,8 +314,7 @@ class YDataGenerator:
                  generator_batch_size: int,
                  first_batch_slice_start_index: int,
                  y_type_dict: dict):
-        # Todo doku: y data is calculated right at class init
-
+        
         # Store the y type dict
         self.y_type_dict = y_type_dict
 
@@ -765,8 +764,8 @@ class YDataGenerator:
 class FileListToDataStream:
     '''
     The `FileListToDataStream` class is used to generate a stream of `X-Blocks` and their according `y-data` out of a list of OHLCV (Open/High/Low/Close/Volume) .csv files.
-    In short, `X-Blocks` are a slice of data from the past, where `y-data` contains information about future gain / trade signals. For detailled
-    information, please take a look at the description of the classes `XBlockGenerator` and `YDataGenerator`.
+    In short, `X-Blocks` are a slice of data from the past, where `y-data` contains information about future gain / trade signals. For detailed
+    information about generating `X-Blocks` and `y-data`, please take a look at the description of the classes `XBlockGenerator` and `YDataGenerator`.
 
 
 
