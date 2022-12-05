@@ -245,7 +245,7 @@ class YDataGenerator:
     - `first_batch_slice_start_index`: A `int` value defining the start index of the first batch. This is required to match the process of the `XBlockGenerator`, which has to start at an index more than 0 to look back.
     - `y_type_dict`: A `dict` which defines which type of y data shall be returned. As a starting point, the templates defines in this class can be used: `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_FLOAT`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_CATEGORICAL`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_TRADE_SIGNALS`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_PAST_FUTURE_GAIN`. Detailled information can be found in the README file.
 
-    Returns: A generator, y data can be acquired using `next()`. A detailed description of the y data structure can be found in the README file. 
+    Returns: A generator, y data can be acquired using `next()`. A detailed description of the y data structure can be found in the README file.
     Raises: StopIteration if the tick table is fully consumed
     '''
 
@@ -314,7 +314,7 @@ class YDataGenerator:
                  generator_batch_size: int,
                  first_batch_slice_start_index: int,
                  y_type_dict: dict):
-        
+
         # Store the y type dict
         self.y_type_dict = y_type_dict
 
@@ -778,12 +778,11 @@ class FileListToDataStream:
     Raises: Todo: ?? StopIteration if the tick table is fully consumed
     '''
 
-    def __init__(self, fileList, batch_size,
-                 base_path, smooth_cnt, smooth_cnt2,
-                 X_Block_lenght, y_lookahead_cnt, gain_lookaround_cnt, y_type, parallel_generators=4,
-                 shuffle=True, random_seed=42, rise_gain_threshold=0.0, fall_gain_threshold=0.0, shortspan=6, midspan=48, longspan=120, y_exponent=1.0,
-                 expected_gain_lookforward=48, entr_thr=0.0, entr_thr2=0.0, entr_thr3=0.0, exit_thr=0.0, exit_thr2=0.0,
-                 norm_price_related_indicators=True, verbose=False, initial_value_norm=True, limit_volume_value=True,
+    def __init__(self,
+                 fileList,
+                 batch_size,
+                 X_Block_lenght,
+                 y_type_dict,
                  **kwargs
                  ):
 
@@ -798,6 +797,7 @@ class FileListToDataStream:
         self.initial_value_norm = True
         self.limit_volume_value = True
         self.norm_price_related_indicators = True
+        self.parallel_generators = 4
 
         # Parse kwargs
 
@@ -832,39 +832,38 @@ class FileListToDataStream:
         if "norm_price_related_indicators" in kwargs.keys():
             if False == kwargs["norm_price_related_indicators"]:
                 self.norm_price_related_indicators = False
+        if "parallel_generators" in kwargs.keys():
+            self.parallel_generators = int(kwargs["parallel_generators"])
 
-        assert 0 < parallel_generators
         assert 0 < batch_size
 
+        # Check if file list is long enough to provide the count of parallel_generators
+        if len(fileList) < self.parallel_generators:
+            logging.warning(
+                f"WARNING: There were not enough files (only {len(fileList)}) to provide {self.parallel_generators} parallel generators, falling back to {len(fileList)} generators.")
+            self.parallel_generators = len(fileList)
+
+        assert 0 < self.parallel_generators
+
         # Check if the batch size suits the number of parallel X/y generators, as each generator has to provide a integer count of elements
-        if 0 != batch_size % parallel_generators:
+        if 0 != batch_size % self.parallel_generators:
             suitable_batch_size = int(
-                np.floor(batch_size / parallel_generators) * parallel_generators)
+                np.floor(batch_size / self.parallel_generators) * self.parallel_generators)
 
             raise ValueError(
-                f"Non-Suitable batch size {batch_size} for {parallel_generators} parallel generators. You could use a batch size of {suitable_batch_size}.")
+                f"Non-Suitable batch size {batch_size} for {self.parallel_generators} parallel generators. You could use a batch size of {suitable_batch_size}.")
 
         self.batch_size = batch_size
         # Todo important: Check if file list len is at least parallel_generators
-        self.parallel_generators = parallel_generators
+        self.parallel_generators = self.parallel_generators
 
         # Each X/y generator shall provide the same amount of data to the overall batch
-        self.batch_size_generator = int(batch_size / parallel_generators)
+        self.batch_size_generator = int(batch_size / self.parallel_generators)
 
-        self.y_lookahead_cnt = y_lookahead_cnt
         self.X_Block_lenght = X_Block_lenght
-        self.gain_lookaround_cnt = gain_lookaround_cnt
 
-        # self.expected_gain_lookforward = expected_gain_lookforward # Todo: Move to y descr dict
-        # self.entr_thr = entr_thr  # Todo: Move to y descr dict
-        # self.entr_thr2 = entr_thr2  # Todo: Move to y descr dict
-        # self.entr_thr3 = entr_thr3  # Todo: Move to y descr dict
-        # self.exit_thr = exit_thr  # Todo: Move to y descr dict
-        # self.exit_thr2 = exit_thr2  # Todo: Move to y descr dict
-
-        # 0 for categorical, 1 for float, 2 for gain lookaround, 3 for entry / exit
-        # Todo: Remove this var and include into dict
-        self.y_type = y_type
+        # Dict for defining the y return type. For further information, please take a look at the YDataGenerator class
+        self.y_type_dict = copy.deepcopy(y_type_dict)
 
         # A storage for the X and y data generators, there will be `parallel_generators` instances of them
         self.X_generators = []
@@ -879,46 +878,36 @@ class FileListToDataStream:
             self.fileList = copy.deepcopy(sklearn.utils.shuffle(
                 fileList, random_state=self.random_seed))
         else:
+            # Reverse the list as it is popped from the end to the beginning
             self.fileList = copy.deepcopy(fileList)
+            self.fileList.reverse()
 
         # Initalize all the parallel X and y generators. Each generator loads a new file from the file list
-        for i in range(parallel_generators):
+        for i in range(self.parallel_generators):
             # Get a file name
             filePath = self.fileList.pop()
 
-            XGen, yGen = self.__initGenerators__(
-                filePath, self.batch_size_generator)
+            XGen, yGen = self.__initGenerators__(filePath)
 
             self.X_generators.append(XGen)
             self.y_generators.append(yGen)
 
             # Todo: Logging only under verbose?!
-            fileName = filePath.split(os.pathsep)[0]
+            fileName = os.path.split(filePath)[-1]
             logging.info(
                 f"File '{fileName}' loaded, {len(self.fileList)} left")
 
     def __initGenerators__(self, filePath):
-        # Todo: Pass a list of full paths to class
-        # _fullname = os.path.join(self.base_path, fn)
-
         tickDF = pd.read_csv(filePath, encoding="utf-8",
                              header=0, index_col='startsAt')
-
-        # Todo important: Do a check if OHLC(V) columns are present and no more or less
-
-        # _tickDF.dropna(inplace=True)  # Does not work with cmc info being nan
-
-        # If there is a quote volume, drop it
-        # if 'quoteVolume' in tickDF.columns:
-        #     tickDF.drop('quoteVolume', axis=1, inplace=True)
 
         # Todo: If no V column then exclude these indicators
         tickAndIndicatorDF = self.indicatorCalculator.CreateAllIndicatorsTable(
             tickDF)
 
-        # If price related norming is necessary, do it, otherwise just copy the tickAndIndicatorDF table
+        # If price related norming is necessary, do it, otherwise just pass the tickAndIndicatorDF table
         if True == self.norm_price_related_indicators:
-            normedDF = self.indicatorCalculator.NormPriceRelated(
+            normedDF = self.indicatorCalculator.NormPriceRelatedIndicators(
                 tickAndIndicatorDF)
         else:
             normedDF = tickAndIndicatorDF
@@ -934,143 +923,175 @@ class FileListToDataStream:
 
         # Init the y data generator
         yGen = YDataGenerator(
-            normedDF,
+            tickDF,
             self.batch_size_generator,
             self.X_Block_lenght,
-            self.y_type
+            self.y_type_dict
         )
 
         return XGen, yGen
 
     def __next__(self):
-        _shape_invalid = True
+        # Todo: Rename
+        batch_shape_invalid = True
 
-        while _shape_invalid:
-            _X_data = None
-            _y_data = None
+        while batch_shape_invalid:
+            # Init placeholders for the batch data to be filled and returned
+            batch_X_data = None
+            batch_y_data = None
+
+            # Iterate through the generators to get data
             for i in range(self.parallel_generators):
                 try:
-                    _X = next(self.X_generators[i])
-                    _y = next(self.y_generators[i])[self.y_type]
-                except StopIteration:  # If the generator stop internally
-                    # Check if the file list is empty
+                    # Get slices of data from the generators
+                    X_slice_from_gen = next(self.X_generators[i])
+                    y_slice_from_gen = next(self.y_generators[i])
+
+                except StopIteration:
+                    # If the generator stop internally for some reason, a new generator shall be created
+                    # It is likely that the `X_slice_from_gen` and `y_slice_from_gen` have a len different than
+                    # the desired `self.batch_size_generator` as the gen ran out of data, so the arrays are
+                    # filled completely by gens from the next OHLCV input file
+
+                    # If the file list is empty, stop the whole process
                     if 0 == len(self.fileList):
-                        logging.info(
-                            "Stop Iteration in Line 256 - 0 == len(self.fileList)")
+                        logging.debug(
+                            "FileListToDataStream StopIteration - File list is empty")
                         raise StopIteration
 
+                    # This weird retry construction is necessary as maybe the new generator also cannot provide
+                    # sufficiant data points to fill the batch, then another new generator shall be initialized.
+                    # This is done max. 10 times
                     for retry in range(10+1):
-                        _fn = self.fileList.pop()
-                        logging.info("File " + str(_fn) + " loaded")
-                        logging.info("Files left: " + str(len(self.fileList)))
-                        self.X_generators[i], self.y_generators[i] = self.__initGenerators__(
-                            _fn, self.batch_size_generator)
-                        try:
-                            _X = next(self.X_generators[i])
-                            _y = next(self.y_generators[i])[self.y_type]
+                        # Get a new file path
+                        filePath = self.fileList.pop()
 
+                        fileName = os.path.split(filePath)[-1]
+                        logging.info(
+                            f"File '{fileName}' loaded, {len(self.fileList)} left")
+
+                        # Replace the old X and y generator instances in the class storage with the new initiated ones
+                        self.X_generators[i], self.y_generators[i] = self.__initGenerators__(
+                            filePath, self.batch_size_generator)
+
+                        try:
+                            # Get slices of data from the generators
+                            X_slice_from_gen = next(self.X_generators[i])
+                            y_slice_from_gen = next(self.y_generators[i])
+
+                            # Exit the retry loop for creating new generators
                             break
                         except StopIteration:
-                            logging.warning(
-                                "Stop Iteration in Line 267 on getting new generators, retry " + str(retry))
+                            # If the new generators ran out of data on the first next() call
+                            logging.debug(
+                                f"FileListToDataStream StopIteration - New generators with file {fileName} ran out of data on first call at retry cnt {retry}")
+
                             if 10 == retry:
                                 raise Exception(
-                                    "10 == retry on getting new generators")
+                                    f"FileListToDataStream - Could not create new generator after {retry} attempts.")
 
-                _fn = "I am inited"
-                # Check if the generator is fully consumed
-                if _X.shape[0] != self.batch_size_generator:
-                    # Check if the file list is empty
+                # Check if the `X_slice_from_gen` and `y_slice_from_gen` have the desired len `self.batch_size_generator`
+                # If not, it has to be filled using new generators to match the self.batch_size_generator
+                # This is somehow duplicated like above --> Todo: Check if the can be merged
+                if X_slice_from_gen.shape[0] != self.batch_size_generator:
+
+                    # If the file list is empty, stop the whole process
                     if 0 == len(self.fileList):
-                        logging.info(
-                            "Stop Iteration in Line 269 - 0 == len(self.fileList)")
+                        logging.debug(
+                            "FileListToDataStream StopIteration - File list is empty (second check)")
                         raise StopIteration
 
-                    _fn = self.fileList.pop()
-                    # Todo: Full file names: Split by folder seperator and show only the last element
-                    logging.info("File " + str(_fn) + " loaded")
-                    logging.info("Files left: " + str(len(self.fileList)))
+                    # Get a new file path
+                    filePath = self.fileList.pop()
+
+                    fileName = os.path.split(filePath)[-1]
+                    logging.info(
+                        f"File '{fileName}' loaded, {len(self.fileList)} left")
+
+                    # Replace the old X and y generator instances in the class storage with the new initiated ones
                     self.X_generators[i], self.y_generators[i] = self.__initGenerators__(
-                        _fn, self.batch_size_generator)
+                        filePath, self.batch_size_generator)
 
-                    # Fill up the missing elements from the new file
+                    # Fill up the missing elements from the new generators
+                    # For this task, create a custom-sized slice, smaller than self.batch_size_generator
                     try:
-                        _missing_cnt = self.batch_size_generator - _X.shape[0]
-                        _missing_X = self.X_generators[i].getCustomSizedSlice(
-                            _missing_cnt)
+                        # Calculate the missing len
+                        missing_len = self.batch_size_generator - \
+                            X_slice_from_gen.shape[0]
 
-                        # Todo: Check if this works
-                        # _missing_y = self.y_generators[i].getCustomSizedSlice(_missing_cnt)[
-                        #     self.y_type]
-                        _missing_y = self.y_generators[i].getCustomSizedSlice(
-                            _missing_cnt)
+                        # Get slices to fill the missing values
+                        missing_X = self.X_generators[i].getCustomSizedSlice(
+                            missing_len)
+                        missing_y = self.y_generators[i].getCustomSizedSlice(
+                            missing_len)
 
-                        _X = np.concatenate((_X, _missing_X))
-                        _y = np.concatenate((_y, _missing_y))
+                        # Concatenate them into the existing array
+                        X_slice_from_gen = np.concatenate(
+                            (X_slice_from_gen, missing_X))
+                        y_slice_from_gen = np.concatenate(
+                            (y_slice_from_gen, missing_y))
+
                     except StopIteration:
+                        # If a StopIteration occurs on
+
                         logging.warning(
-                            "Caught StopIteration in filling missing values for " + str(_fn))
-                        # Check if the file list is empty
+                            f"Caught StopIteration in filling missing values for '{fileName}', starting with completely new batch blocks")
+
+                        # If the file list is empty, stop the whole process
                         if 0 == len(self.fileList):
-                            logging.info(
-                                "Stop Iteration in Line 295 - 0 == len(self.fileList)")
+                            logging.debug(
+                                "FileListToDataStream StopIteration - File list is empty (filling missing values - new batch blocks)")
                             raise StopIteration
 
-                        _fn = self.fileList.pop()
-                        logging.info("File " + str(_fn) + " loaded")
-                        logging.info("Files left: " + str(len(self.fileList)))
+                        # Get a new file path
+                        filePath = self.fileList.pop()
+
+                        fileName = os.path.split(filePath)[-1]
+                        logging.info(
+                            f"File '{fileName}' loaded, {len(self.fileList)} left")
+
+                        # Replace the old X and y generator instances in the class storage with the new initiated ones
                         self.X_generators[i], self.y_generators[i] = self.__initGenerators__(
-                            _fn, self.batch_size_generator)
+                            filePath, self.batch_size_generator)
 
-                        _X = next(self.X_generators[i])
+                        # Get completely new slices
+                        # Todo important: What happens if those a not the right size???
+                        X_slice_from_gen = next(self.X_generators[i])
+                        y_slice_from_gen = next(self.y_generators[i])
 
-                        # Todo: Check if this works
-                        # _y = next(self.y_generators[i])[self.y_type]
-                        _y = next(self.y_generators[i])
+                # Ensure that the time-dimension of X and y has the same size
+                assert X_slice_from_gen.shape[0] == y_slice_from_gen.shape[0]
 
-                #
-                # if 0 == self.y_type:
-                #     assert 1 == len(_y.shape)
-                # elif 1 == self.y_type or 2 == self.y_type or 3 == self.y_type:
-                #     assert 2 == len(_y.shape)
+                # If it is the first generator, the X and y batch data is None, so replace it
+                if batch_X_data is None:
+                    batch_X_data = X_slice_from_gen
+                    batch_y_data = y_slice_from_gen
 
-                # Todo: Workaround to fix if shape is not (xx,1), finally check why this happens
-                # if 2 != len(_y.shape):
-                #  _y = _y.reshape((-1,1))
-
-                # Ensure that the time-dimension has the same size
-                assert _X.shape[0] == _y.shape[0]
-
-                if _X_data is None:
-                    _X_data = _X
-                    _y_data = _y
+                # The data of every following generator is concatenated on the existing one
                 else:
-                    _X_data = np.concatenate((_X_data, _X))
-                    _y_data = np.concatenate((_y_data, _y))
+                    batch_X_data = np.concatenate(
+                        (batch_X_data, X_slice_from_gen))
+                    batch_y_data = np.concatenate(
+                        (batch_y_data, y_slice_from_gen))
 
-                _y_data = _y_data
+            # Check if the overall batch size is valid, then exit, otherwise try again
+            if self.batch_size == batch_X_data.shape[0]:
+                # Clear the invalid flag to exit the while loop on next round
+                batch_shape_invalid = False
 
-            # Try again if size is wrong
-            if self.batch_size != _X_data.shape[0]:
-                logging.warning("\nself.batch_size != _X_data.shape[0]")
-                logging.warning("self.batch_size: " + str(self.batch_size))
-                logging.warning("_X_data.shape[0]: " + str(_X_data.shape[0]))
-                logging.warning("_X_data.shape: " + str(_X_data.shape))
-                continue
+                # Shuffle the data if desired
+                if self.shuffle:
+                    batch_X_data, batch_y_data = sklearn.utils.shuffle(
+                        batch_X_data, batch_y_data, random_state=self.random_seed)
+
             else:
-                _shape_invalid = False
+                logging.warning(
+                    f"Batch size did not match the desired size, trying again: self.batch_size != _X_data.shape[0], {self.batch_size} != {batch_X_data.shape[0]}")
 
-            if self.shuffle:
-                _X_data, _y_data = sklearn.utils.shuffle(
-                    _X_data, _y_data, random_state=self.random_seed)
+        # --- Here the code continues after shape_invalid == False --- #
 
-        # End if everything is consumed
-        if self.batch_size != _X_data.shape[0]:
-            logging.info(
-                "Stop Iteration in Line 376 - self.batch_size != _X_data.shape[0]")
-            logging.info("self.batch_size: " + str(self.batch_size))
-            logging.info("_X_data.shape[0]: " + str(_X_data.shape[0]))
-            logging.info("_X_data.shape: " + str(_X_data.shape))
-            raise StopIteration
-
-        return _X_data, _y_data
+        # Todo: Create some way to get the 'column names' of the x and y arrays
+        return {
+            "X": batch_X_data,
+            "y": batch_y_data
+        }

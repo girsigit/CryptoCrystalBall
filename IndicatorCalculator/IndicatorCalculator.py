@@ -100,8 +100,6 @@ class IndicatorCalculator():
                 if not c in ALLOWED_COLUMNS:
                     columnsToDrop.append(c)
 
-            print(("columnsToDrop", columnsToDrop))
-
             # Drop them
             while 0 < len(columnsToDrop):
                 cleanSourceTable = copy.deepcopy(cleanSourceTable)
@@ -661,7 +659,7 @@ class IndicatorCalculator():
 
         return patternTable
 
-    # Normalize price - related columns
+    # Normalize price - related indicators
     def NormPriceRelatedIndicators(self, sourceTable, **kwargs):
         '''
         This method is used to normalize price-related indicators relative to the `open` price.
