@@ -17,19 +17,19 @@ import copy
 class IndicatorCalculator():
     '''
     The IndicatorCalculation class is used to add financial indicators to a pandas table of OHLC(V) data.
-    It is based on the library "TA-Lib" (See Link https://mrjbq7.github.io/ta-lib/) 
+    It is based on the library "TA-Lib" (See Link https://mrjbq7.github.io/ta-lib/)
 
     The columns of the input table have to be named as following:
     - open, high, low, close, volume; The timestamp is the index of the table.
 
     ---
-    ### Requried constructor arguments
+    # Requried constructor arguments
     - `shortspan`: An `int` for calculting indicators over a short time period (--> fast changing indicators, e.g. 6)
     - `midspan`: An `int` for calculting indicators over a middle time period (--> in-between changing indicators, e.g. 24)
     - `longspan`: An `int` for calculting indicators over a long time period (--> slow changing indicators, e.g. 120)
 
     ---
-    ### Optional constructor arguments
+    # Optional constructor arguments
     - `verbose`: A `bool` flag for activating printing of additional information, like table shapes. `False` by default.
     - `dropna`: A `bool` flag if rows containing `NaN` values shall be dropped. `False` by default, `NaN`s are replaced by `0.0`.
     '''
@@ -51,7 +51,7 @@ class IndicatorCalculator():
             if True == kwargs["dropna"]:
                 self.dropna = True
 
-    def CreateAllIndicatorsTable(self, ohlcvTbl: pd.DataFrame, **kwargs):
+    def CreateAllIndicatorsTable(self, sourceTable: pd.DataFrame, **kwargs):
         '''
         This method calculates all available stock indicators and merges them into one table.
 
@@ -64,18 +64,20 @@ class IndicatorCalculator():
         - If it is a candle-pattern indicator, a trailing `pat_` is include into the name.
 
         Requried arguments:
-        - `ohlcvTbl`: A `pandas.DataFrame` containing these columns: `open, high, low, close`.
+        - `sourceTable`: A `pandas.DataFrame` containing these columns: `open, high, low, close`.
                     The `volume` column is optional, if it is not present, no volume-based indicators are calculated.
                     The ticks timestamps are the index of the table.
 
         Optional arguments:
         - `calcVolumeInidators`: A `bool` flag if volume indicators shall be calculated (Of course only if `ohlcvTbl` contains a `volume` column). `True` by default.
         - `calcPatternIndicators`: A `bool` flag if candle pattern indicators shall be calculated. `True` by default.
+        - `dropNonOHLCVinputColumns`: A `bool` flag if any other columns than OHLVC shall be dropped from the input table. This is useful, as for example data from Bittrex has an QuoteVolume column in the raw data. `True` by default.
         '''
 
         # Parse kwargs
         calcVolumeInidators = True
         calcPatternIndicators = True
+        dropNonOHLCVinputColumns = True
 
         if "calcVolumeInidators" in kwargs.keys():
             if False == kwargs["calcVolumeInidators"]:
@@ -83,31 +85,64 @@ class IndicatorCalculator():
         if "calcPatternIndicators" in kwargs.keys():
             if False == kwargs["calcPatternIndicators"]:
                 calcPatternIndicators = False
+        if "dropNonOHLCVinputColumns" in kwargs.keys():
+            if False == kwargs["dropNonOHLCVinputColumns"]:
+                dropNonOHLCVinputColumns = False
+
+        # Check if columns have to be dropped
+        cleanSourceTable = sourceTable
+
+        if True == dropNonOHLCVinputColumns:
+            ALLOWED_COLUMNS = ['open', 'high', 'low', 'close', 'volume']
+            columnsToDrop = []
+
+            for c in sourceTable:
+                if not c in ALLOWED_COLUMNS:
+                    columnsToDrop.append(c)
+
+            print(("columnsToDrop", columnsToDrop))
+
+            # Drop them
+            while 0 < len(columnsToDrop):
+                cleanSourceTable = copy.deepcopy(cleanSourceTable)
+                cleanSourceTable.drop(
+                    columnsToDrop.pop(), axis=1, inplace=True)
 
         # Calculate non-period-sensitive indicators
         concTableRaw = pd.concat([
-            ohlcvTbl,
-            self.CalcCycTable(ohlcvTbl)
+            cleanSourceTable,
+            self.CalcCycTable(cleanSourceTable)
         ], axis=1)
-
-        # Todo important: There will be an error on concing the tables based on three timespans, as for example c_HT_TRENDLINE 	c_SAR_0005_005 	c_SAR_002_02 from CalcOverlapTable are calced three times
 
         # Calculate period-sensitive indicators for each timespan
         for timeSpan in [self.SHORTSPAN, self.MIDSPAN, self.LONGSPAN]:
-            # Concat non-volume and non-pattern indicators
-            concTableRaw = pd.concat([
-                ohlcvTbl,
-                self.CalcOverlapTable(ohlcvTbl, timeSpan),
-                self.CalcMomentumTable(ohlcvTbl, timeSpan),
-                self.CalcVolyTable(ohlcvTbl, timeSpan),
-                self.CalcStatTable(ohlcvTbl, timeSpan)
-            ], axis=1)
+            # Join the new indicators into the table
+            # This cannot be done using pd.concat, as some timespan-insensitve columns would be double
+            concTableRaw = concTableRaw.join(self.CalcOverlapTable(
+                cleanSourceTable, timeSpan), rsuffix="_dropMe")
+            concTableRaw = concTableRaw.drop(
+                concTableRaw.filter(regex='_dropMe').columns, axis=1)
+
+            concTableRaw = concTableRaw.join(self.CalcMomentumTable(
+                cleanSourceTable, timeSpan), rsuffix="_dropMe")
+            concTableRaw = concTableRaw.drop(
+                concTableRaw.filter(regex='_dropMe').columns, axis=1)
+
+            concTableRaw = concTableRaw.join(self.CalcVolyTable(
+                cleanSourceTable, timeSpan), rsuffix="_dropMe")
+            concTableRaw = concTableRaw.drop(
+                concTableRaw.filter(regex='_dropMe').columns, axis=1)
+
+            concTableRaw = concTableRaw.join(self.CalcStatTable(
+                cleanSourceTable, timeSpan), rsuffix="_dropMe")
+            concTableRaw = concTableRaw.drop(
+                concTableRaw.filter(regex='_dropMe').columns, axis=1)
 
         # Add volume indicators
-        if ("volume" in ohlcvTbl.columns and True == calcVolumeInidators):
+        if ("volume" in cleanSourceTable.columns and True == calcVolumeInidators):
             concTableRaw = pd.concat([
                 concTableRaw,
-                self.CalcVolTable(ohlcvTbl, self.SHORTSPAN,
+                self.CalcVolTable(cleanSourceTable, self.SHORTSPAN,
                                   self.MIDSPAN, self.LONGSPAN)
             ], axis=1)
 
@@ -115,7 +150,7 @@ class IndicatorCalculator():
         if (True == calcPatternIndicators):
             concTableRaw = pd.concat([
                 concTableRaw,
-                self.CalcPatternTable(ohlcvTbl)
+                self.CalcPatternTable(cleanSourceTable)
             ], axis=1)
 
         # Sort table columns ascending by name to ensure same output data format every time
@@ -183,6 +218,9 @@ class IndicatorCalculator():
         else:
             overlapTable.fillna(0, inplace=True)
 
+        # Sort table columns ascending by name to ensure same output data format every time
+        overlapTable.sort_index(axis=1, inplace=True)
+
         if self.verbose:
             print("overlapTable.shape = " + str(overlapTable.shape))
 
@@ -245,8 +283,8 @@ class IndicatorCalculator():
         momentumTable['FASTKRSI'] = fastkrsi
         momentumTable['FASTDRSI'] = fastdrsi
 
-        #macd, macdsignal, macdhist = MACDEXT(close, fastperiod=12, fastmatype=0, slowperiod=26, slowmatype=0, signalperiod=9, signalmatype=0)
-        #macd, macdsignal, macdhist = MACDFIX(close, signalperiod=9)
+        # macd, macdsignal, macdhist = MACDEXT(close, fastperiod=12, fastmatype=0, slowperiod=26, slowmatype=0, signalperiod=9, signalmatype=0)
+        # macd, macdsignal, macdhist = MACDFIX(close, signalperiod=9)
 
         # Dynamic period indicators
         momentumTable['ADX{}'.format(timeSpan)] = talib.ADX(
@@ -293,6 +331,9 @@ class IndicatorCalculator():
         else:
             momentumTable.fillna(0, inplace=True)
 
+        # Sort table columns ascending by name to ensure same output data format every time
+        momentumTable.sort_index(axis=1, inplace=True)
+
         if self.verbose:
             print("momentumTable.shape = " + str(momentumTable.shape))
 
@@ -322,6 +363,9 @@ class IndicatorCalculator():
             volyTable.dropna(inplace=True)
         else:
             volyTable.fillna(0, inplace=True)
+
+        # Sort table columns ascending by name to ensure same output data format every time
+        volyTable.sort_index(axis=1, inplace=True)
 
         if self.verbose:
             print("volyTable.shape = " + str(volyTable.shape))
@@ -360,6 +404,9 @@ class IndicatorCalculator():
             cycTable.dropna(inplace=True)
         else:
             cycTable.fillna(0, inplace=True)
+
+        # Sort table columns ascending by name to ensure same output data format every time
+        cycTable.sort_index(axis=1, inplace=True)
 
         if self.verbose:
             print("cycTable.shape = " + str(cycTable.shape))
@@ -409,6 +456,9 @@ class IndicatorCalculator():
         if self.verbose:
             print("statTable.shape = " + str(statTable.shape))
 
+        # Sort table columns ascending by name to ensure same output data format every time
+        statTable.sort_index(axis=1, inplace=True)
+
         return statTable
 
     def CalcVolTable(self, sourceTable: pd.DataFrame, timeSpanShort: int, timeSpanMiddle: int, timeSpanLong: int):
@@ -444,6 +494,9 @@ class IndicatorCalculator():
             volTable.dropna(inplace=True)
         else:
             volTable.fillna(0, inplace=True)
+
+        # Sort table columns ascending by name to ensure same output data format every time
+        volTable.sort_index(axis=1, inplace=True)
 
         if self.verbose:
             print("volTable.shape = " + str(volTable.shape))
@@ -588,43 +641,74 @@ class IndicatorCalculator():
             vals = patternTable.iloc[:, ci].values
             maxAbsVal = np.max(np.abs(vals))
 
-            # Todo: FutureWarning: In a future version, `df.iloc[:, i] = newvals` will attempt to set the values inplace instead of always setting a new array.
             if 0 < maxAbsVal:
-                patternTable.iloc[:, ci] /= (1.0 * maxAbsVal)
+                patternTable[patternTable.columns[ci]] /= (1.0 * maxAbsVal)
+
             else:
-                patternTable.iloc[:, ci] *= 1.0  # To convert them to float
+                # To convert them to float
+                patternTable[patternTable.columns[ci]] *= 1.0
 
         if True == self.dropna:
             patternTable.dropna(inplace=True)
         else:
             patternTable.fillna(0, inplace=True)
 
+        # Sort table columns ascending by name to ensure same output data format every time
+        patternTable.sort_index(axis=1, inplace=True)
+
         if self.verbose:
             print("patternTable.shape = " + str(patternTable.shape))
 
         return patternTable
 
-    # Todo:Doku
     # Normalize price - related columns
-    # Do this for train and test - not time-sensitive
-    def NormPriceRelated(self, tbl):
-        pNormed = copy.deepcopy(tbl)
+    def NormPriceRelatedIndicators(self, sourceTable, **kwargs):
+        '''
+        This method is used to normalize price-related indicators relative to the `open` price.
+        This is useful, as the absolute prices (e.g. in USD) of several asset varies over a very large span, 
+        and so do the price-related indicators, but the information inside the indicator is the same for all.
 
-        open_values = pNormed.loc[:, 'open']
+        Norming is done on the `open`, `high`, `low` and `close` column, as well as on any column which name
+        starts with 'c_', indicating a price-related indicator. The `baseColumn` (by default `open`) is excepted from norming. 
+
+        Requried arguments:
+        - `sourceTable`: A `pandas.DataFrame` containing tick and indicator data.
+
+        Optional arguments:
+        - `dropBaseColumn`: A `bool` flag if the column that is normed on, the 'base' column, shall be dropped. By default, the base column is `open`. `True` by default.
+        - `baseColumn`: A `string` to define the 'base' column on which the indicators shall be normed. `open` by default.
+        '''
+
+        # Parse kwargs
+        dropBaseColumn = True
+        baseColumn = 'open'
+
+        if "dropBaseColumn" in kwargs.keys():
+            if False == kwargs["dropBaseColumn"]:
+                dropBaseColumn = False
+        if "baseColumn" in kwargs.keys():
+            baseColumn = str(kwargs["dropBaseColumn"])
+
+        # Create a save copy of the table
+        normedTable = copy.deepcopy(sourceTable)
+
+        # Get the base values
+        baseValues = normedTable.loc[:, baseColumn]
 
         # Price columns
-        pNormed['close'] /= open_values
-        pNormed['high'] /= open_values
-        pNormed['low'] /= open_values
-
-        pNormed['close'] -= 1.0
-        pNormed['high'] -= 1.0
-        pNormed['low'] -= 1.0
+        for c in ['open', 'close', 'high', 'low']:
+            if baseColumn != c:
+                normedTable[c] /= baseValues
+                normedTable[c] -= 1.0
 
         # Iterate through other and check for beginning 'c_
-        for c in pNormed.columns:
-            if 'c_' == c[:2]:  # or 'close' == c or 'high' == c or 'low' == c:
-                pNormed[c] /= open_values
-                pNormed[c] -= 1.0
+        for c in normedTable.columns:
+            if 'c_' == c[:2]:
+                normedTable[c] /= baseValues
+                normedTable[c] -= 1.0
 
-        return pNormed
+        # Drop the base column
+        if True == dropBaseColumn:
+            normedTable.drop(baseColumn, axis=1, inplace=True)
+
+        return normedTable
