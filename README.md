@@ -2,6 +2,10 @@
 
 **A framework for predicting entry and exit signals for trading cryptocurrencies (or ETFs, stocks, ...).**
 
+**If you want to try the features on your own, please run this colab notebook:**
+
+[![Run in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/girsigit/CryptoCrystalBall/blob/main/JupyterDocker/notebooks/CompleteExample.ipynb)
+
 It is more a kind of a 'research' project to find a method of automatically generating trade entry and exit signals than a ready-to-use application. Of course, if I find a suitable and general enough algorithm, it can then be used as a live trading application.
 
 :warning::warning: WARNING: If you use any trade signals from this application for trading with real money, be aware they could be misleading! You could loose your money, be careful and think of what you are doing! I cannot and will not take any responsibility for the generated signals. :warning::warning:
