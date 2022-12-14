@@ -972,7 +972,7 @@ class FileListToDataStream:
 
                         # Replace the old X and y generator instances in the class storage with the new initiated ones
                         self.X_generators[i], self.y_generators[i] = self.__initGenerators__(
-                            filePath, self.batch_size_generator)
+                            filePath)
 
                         try:
                             # Get slices of data from the generators
@@ -1010,7 +1010,7 @@ class FileListToDataStream:
 
                     # Replace the old X and y generator instances in the class storage with the new initiated ones
                     self.X_generators[i], self.y_generators[i] = self.__initGenerators__(
-                        filePath, self.batch_size_generator)
+                        filePath)
 
                     # Fill up the missing elements from the new generators
                     # For this task, create a custom-sized slice, smaller than self.batch_size_generator
@@ -1052,7 +1052,7 @@ class FileListToDataStream:
 
                         # Replace the old X and y generator instances in the class storage with the new initiated ones
                         self.X_generators[i], self.y_generators[i] = self.__initGenerators__(
-                            filePath, self.batch_size_generator)
+                            filePath)
 
                         # Get completely new slices
                         # Todo important: What happens if those a not the right size???
