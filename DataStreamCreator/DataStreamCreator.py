@@ -968,7 +968,7 @@ class FileListToDataStream:
 
                         fileName = os.path.split(filePath)[-1]
                         logging.info(
-                            f"File '{fileName}' loaded, {len(self.fileList)} left")
+                            f"File '{fileName}' loaded in retry loop, {len(self.fileList)} left")
 
                         # Replace the old X and y generator instances in the class storage with the new initiated ones
                         self.X_generators[i], self.y_generators[i] = self.__initGenerators__(
@@ -994,6 +994,8 @@ class FileListToDataStream:
                 # If not, it has to be filled using new generators to match the self.batch_size_generator
                 # This is somehow duplicated like above --> Todo: Check if the can be merged
                 if X_slice_from_gen.shape[0] != self.batch_size_generator:
+                    logging.debug(
+                        f"X_slice_from_gen.shape[0] != self.batch_size_generator, {X_slice_from_gen.shape[0]} != {self.batch_size_generator}")
 
                     # If the file list is empty, stop the whole process
                     if 0 == len(self.fileList):
@@ -1043,21 +1045,33 @@ class FileListToDataStream:
                                 "FileListToDataStream StopIteration - File list is empty (filling missing values - new batch blocks)")
                             raise StopIteration
 
-                        # Get a new file path
-                        filePath = self.fileList.pop()
-
-                        fileName = os.path.split(filePath)[-1]
-                        logging.info(
-                            f"File '{fileName}' loaded, {len(self.fileList)} left")
-
-                        # Replace the old X and y generator instances in the class storage with the new initiated ones
-                        self.X_generators[i], self.y_generators[i] = self.__initGenerators__(
-                            filePath)
-
                         # Get completely new slices
-                        # Todo important: What happens if those a not the right size???
-                        X_slice_from_gen = next(self.X_generators[i])
-                        y_slice_from_gen = next(self.y_generators[i])
+                        for attempt in range(1, 10+1, 1):
+                            # Get a new file path
+                            filePath = self.fileList.pop()
+
+                            fileName = os.path.split(filePath)[-1]
+                            logging.info(
+                                f"File '{fileName}' loaded, {len(self.fileList)} left")
+
+                            # Replace the old X and y generator instances in the class storage with the new initiated ones
+                            self.X_generators[i], self.y_generators[i] = self.__initGenerators__(
+                                filePath)
+
+                            # Todo important: What happens if those a not the right size???
+                            try:
+                                logging.debug(
+                                    f"Getting completely new slices after trying to fill missing values, attempt number {attempt}")
+                                X_slice_from_gen = next(self.X_generators[i])
+                                y_slice_from_gen = next(self.y_generators[i])
+
+                                break
+                            except StopIteration:
+                                logging.warning(
+                                    f"Getting completely new slices failed on attempt {attempt} with file '{fileName}', trying again..")
+                                if 10 == attempt:
+                                    logging.error(
+                                        f"Maximum attempts ({attempt}) for getting completely new slices reached, stopping!")
 
                 # Ensure that the time-dimension of X and y has the same size
                 assert X_slice_from_gen.shape[0] == y_slice_from_gen.shape[0]
