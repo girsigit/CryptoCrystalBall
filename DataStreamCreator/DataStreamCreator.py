@@ -767,22 +767,35 @@ class FileListToDataStream:
     In short, `X-Blocks` are a slice of data from the past, where `y-data` contains information about future gain / trade signals. For detailed
     information about generating `X-Blocks` and `y-data`, please take a look at the description of the classes `XBlockGenerator` and `YDataGenerator`.
 
-
+    The data is provided as an iterable object (Todo: Check what exactly, not a real generator).
 
     Requried constructor arguments:
-    - `fileList`: A `list` of `string` with complete paths to the tick data (OHLCV) files.
-    - `todo`: some stuff
+    - `fileList`: A `list` of `string` with absolute paths to the tick data (OHLCV) files.
+    - `batch_size`: An `int` how many X/y data entries the returned arrays shall contain.
+    - `X_Block_lenght`: This `int` variable defines how many timestamps each X-Block shall cover. Passed internally to the X-Block generator.
+    - `y_type_dict`: A `dict` which defines which type of y data shall be returned. As a starting point, the templates defines in this class can be used: `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_FLOAT`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_CATEGORICAL`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_TRADE_SIGNALS`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_PAST_FUTURE_GAIN`. Detailled information can be found in the README file.
 
+    Optional constructor arguments:
+    - `shortspan`: An `int` defining the timespan for calculting short-term indicators (--> fast changing indicators), by default `6`.
+    - `midspan`: An `int` defining the timespan for calculting middle-term indicators (--> in-between changing indicators), by default `24`.
+    - `longspan`: An `int` defining the timespan for calculting long-term indicators (--> slowly changing indicators), by default `120`.
+    - `random_seed`: An `int` value for passing a custom seed for randomization, used to provide reproducible results. By default `42`.
+    - `shuffle`: A `bool` value defining if the data shall be shuffled. This affects file list order as well as the internal shuffling inside the `X-Block` and `y-data` generators. By default `False`.
+    - `verbose`: A `bool` value toggling the printing of additional debug information. By default `False`.
+    - `initial_value_norm`: A `bool` value to switch if all indicators included in `Todo` shall be normalized based on the first value in each X-block. This is then done for each indicator individually, the first value is then 0.0, all following are relative to it. Used for volume inidcators with a large spread. By default `True`.
+    - `limit_volume_value`: A `bool` value to switch if the volume column shall be scaled to a maximum value of `1.0`. This can be helpful as the volume may have a large absolute value spread. By default `True`.
+    - `norm_price_related_indicators`:  A `bool` value to toggle the normalization of price-related indicators relative to the `open` price.
+    - `parallel_generators = An `int` value for defining how many parallel generators shall be used for generating `X-Blocks` and `y-data`, e.g., how many currency csv files shalled be mixed together. By default `4`.
 
-    Returns: Todo: Two  generators ??
-    Raises: Todo: ?? StopIteration if the tick table is fully consumed
+    Returns: An iterable object, from which the next data batch can be gathered using Pythons `next()` method. The acutal data is a `dict`, containing the key `X` for the `X-Blocks` batch and `y` for the `y-data` batch.
+    Raises: StopIteration if the tick data is fully consumed
     '''
 
     def __init__(self,
-                 fileList,
-                 batch_size,
-                 X_Block_lenght,
-                 y_type_dict,
+                 fileList: list,
+                 batch_size: int,
+                 X_Block_lenght: int,
+                 y_type_dict: dict,
                  **kwargs
                  ):
 
@@ -798,6 +811,7 @@ class FileListToDataStream:
         self.limit_volume_value = True
         self.norm_price_related_indicators = True
         self.parallel_generators = 4
+        self.kwargs = kwargs
 
         # Parse kwargs
 
@@ -871,7 +885,7 @@ class FileListToDataStream:
 
         # Initiate an IndicatorCalculator instance
         self.indicatorCalculator = IndicatorCalculator(
-            self.shortspan, self.midspan, self.longspan, verbose=self.verbose)
+            self.shortspan, self.midspan, self.longspan, **kwargs)
 
         # Create a modification-safe file list and shuffle them if necessary
         if True == self.shuffle:
@@ -903,12 +917,12 @@ class FileListToDataStream:
 
         # Todo: If no V column then exclude these indicators
         tickAndIndicatorDF = self.indicatorCalculator.CreateAllIndicatorsTable(
-            tickDF)
+            tickDF, **self.kwargs)
 
         # If price related norming is necessary, do it, otherwise just pass the tickAndIndicatorDF table
         if True == self.norm_price_related_indicators:
             normedDF = self.indicatorCalculator.NormPriceRelatedIndicators(
-                tickAndIndicatorDF)
+                tickAndIndicatorDF, **self.kwargs)
         else:
             normedDF = tickAndIndicatorDF
 

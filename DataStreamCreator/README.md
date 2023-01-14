@@ -1,4 +1,11 @@
-The `DataStreamCreator` class consists of several sub-classes for generating tick data frames (X-blocks), some future price or trade information for training (y data) and one for converting a file list of OHLCV csv data into a data stream of these two informations.
+The `DataStreamCreator` file consists of several sub-classes for generating tick data frames (X-blocks), some future price or trade information for training (y data) and one for converting a file list of OHLCV csv data into a data stream of these two informations.
+
+**Todo: Split it that every class is in a single file**
+
+Classes contained in the file:
+- [XBlockGenerator](README.md#xblockgenerator)
+- [YDataGenerator](README.md#ydatagenerator)
+- [FileListToDataStream](README.md#filelisttodatastream)
 
 # **XBlockGenerator**
 The `XBlockGenerator` class is used to generate time-frame slices (= X-blocks) out of a time series table of tick and indicator data.
@@ -137,3 +144,57 @@ The output of this data type is the one-hot-encoded category of the price moveme
 Todo: Test and write it
 
 
+# FileListToDataStream
+
+The `FileListToDataStream` class is used to generate a stream of `X-Blocks` and their according `y-data` out of a list of OHLCV (Open/High/Low/Close/Volume) .csv files.
+In short, `X-Blocks` are a slice of data from the past, where `y-data` contains information about future gain / trade signals. For detailed
+information about generating `X-Blocks` and `y-data`, please take a look at the description of the classes `XBlockGenerator` and `YDataGenerator`.
+
+The data is provided as an iterable object (Todo: Check what exactly, not a real generator).
+
+Requried constructor arguments:
+- `fileList`: A `list` of `string` with absolute paths to the tick data (OHLCV) files.
+- `batch_size`: An `int` how many X/y data entries the returned arrays shall contain.
+- `X_Block_lenght`: This `int` variable defines how many timestamps each X-Block shall cover. Passed internally to the X-Block generator.
+- `y_type_dict`: A `dict` which defines which type of y data shall be returned. As a starting point, the templates defines in this class can be used: `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_FLOAT`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_DIRECTION_CATEGORICAL`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_TRADE_SIGNALS`, `PARAM_DICT_TEMPLATE_Y_DATA_TYPE_PAST_FUTURE_GAIN`. Detailled information can be found in the README file.
+
+Optional constructor arguments:
+- `shortspan`: An `int` defining the timespan for calculting short-term indicators (--> fast changing indicators), by default `6`.
+- `midspan`: An `int` defining the timespan for calculting middle-term indicators (--> in-between changing indicators), by default `24`.
+- `longspan`: An `int` defining the timespan for calculting long-term indicators (--> slowly changing indicators), by default `120`.
+- `random_seed`: An `int` value for passing a custom seed for randomization, used to provide reproducible results. By default `42`.
+- `shuffle`: A `bool` value defining if the data shall be shuffled. This affects file list order as well as the internal shuffling inside the `X-Block` and `y-data` generators. By default `False`.
+- `verbose`: A `bool` value toggling the printing of additional debug information. By default `False`.
+- `initial_value_norm`: A `bool` value to switch if all indicators included in `Todo` shall be normalized based on the first value in each X-block. This is then done for each indicator individually, the first value is then 0.0, all following are relative to it. Used for volume inidcators with a large spread. By default `True`.
+- `limit_volume_value`: A `bool` value to switch if the volume column shall be scaled to a maximum value of `1.0`. This can be helpful as the volume may have a large absolute value spread. By default `True`.
+- `norm_price_related_indicators`:  A `bool` value to toggle the normalization of price-related indicators relative to the `open` price.
+- `parallel_generators = An `int` value for defining how many parallel generators shall be used for generating `X-Blocks` and `y-data`, e.g., how many currency csv files shalled be mixed together. By default `4`.
+
+Returns: An iterable object, from which the next data batch can be gathered using Pythons `next()` method. The acutal data is a `dict`, containing the key `X` for the `X-Blocks` batch and `y` for the `y-data` batch.
+Raises: StopIteration if the tick data is fully consumed
+
+Below you can find a code snippet on how to use the class. It has been taken from the full example notebook in [NeuralNetworkTrainingExample.ipynb](../JupyterDocker/notebooks/NeuralNetworkTrainingExample.ipynb).
+
+```python
+# Initialize the FileListToDataStream generator
+dataStreamTraining = DataStreamCreator.FileListToDataStream(fileList = TRAIN_FILES,
+                                                    batch_size = BATCH_SIZE,
+                                                    X_Block_lenght = X_BLOCK_LENGHT,
+                                                    y_type_dict=Y_TYPE_DICT,
+                                                    shuffle=True
+                                                    )
+# Get the first batch
+batch = next(dataStreamTraining)
+XShape = batch['X'].shape
+yShape = batch['y'].shape
+FEATURES = XShape[-1]
+
+print(f"Shape of X-Block array: (BATCH_SIZE, X_BLOCK_LENGHT, FEATURES) -> {XShape}")
+print(f"Shape of y-data array: (BATCH_SIZE, DIRECTION & DERVIATION) -> {yShape}")
+print(f"FEATURES: {FEATURES}")
+
+# Output:
+# Shape of X-Block array: (BATCH_SIZE, X_BLOCK_LENGHT, FEATURES) -> (256, 512, 226)
+# Shape of y-data array: (BATCH_SIZE, DIRECTION & DERVIATION) -> (256, 2)
+# FEATURES: 226
+```

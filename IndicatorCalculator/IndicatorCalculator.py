@@ -15,26 +15,25 @@ import copy
 
 
 class IndicatorCalculator():
-    '''
-    The IndicatorCalculation class is used to add financial indicators to a pandas table of OHLC(V) data.
-    It is based on the library "TA-Lib" (See Link https://mrjbq7.github.io/ta-lib/)
-
-    The columns of the input table have to be named as following:
-    - open, high, low, close, volume; The timestamp is the index of the table.
-
-    ---
-    # Requried constructor arguments
-    - `shortspan`: An `int` for calculting indicators over a short time period (--> fast changing indicators, e.g. 6)
-    - `midspan`: An `int` for calculting indicators over a middle time period (--> in-between changing indicators, e.g. 24)
-    - `longspan`: An `int` for calculting indicators over a long time period (--> slow changing indicators, e.g. 120)
-
-    ---
-    # Optional constructor arguments
-    - `verbose`: A `bool` flag for activating printing of additional information, like table shapes. `False` by default.
-    - `dropna`: A `bool` flag if rows containing `NaN` values shall be dropped. `False` by default, `NaN`s are replaced by `0.0`.
-    '''
-
     def __init__(self, shortspan: int, midspan: int, longspan: int, **kwargs):
+        '''
+        The IndicatorCalculation class is used to add financial indicators to a pandas table of OHLC(V) data.
+        It is based on the library "TA-Lib" (See Link https://mrjbq7.github.io/ta-lib/)
+
+        The columns of the input table have to be named as following:
+        - open, high, low, close, volume; The timestamp is the index of the table.
+
+        ---
+        # Requried constructor arguments
+        - `shortspan`: An `int` defining the timespan for calculting short-term indicators (--> fast changing indicators), by default `6`
+        - `midspan`: An `int` defining the timespan for calculting middle-term indicators (--> in-between changing indicators), by default `24`
+        - `longspan`: An `int` defining the timespan for calculting long-term indicators (--> slowly changing indicators), by default `120`
+
+        ---
+        # Optional constructor arguments
+        - `verbose`: A `bool` flag for activating printing of additional information, like table shapes. `False` by default.
+        - `dropna`: A `bool` flag if rows containing `NaN` values shall be dropped. `False` by default, `NaN`s are replaced by `0.0`.
+        '''
 
         # Class init
         self.SHORTSPAN = shortspan
