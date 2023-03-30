@@ -302,9 +302,35 @@ class YDataGenerator:
     Y_DATA_TYPE_PAST_FUTURE_GAIN = 3
     PARAM_DICT_TEMPLATE_Y_DATA_TYPE_PAST_FUTURE_GAIN = {
         "dataType": Y_DATA_TYPE_PAST_FUTURE_GAIN,
-        "gain_timespan": 12,
+        "gain_timespan": 60,
         "direction_ma_timespan": 48,
         "derivation_ma_timespan": 48
+    }
+
+    # This data type returns entry and exit signals based on the past and future gain.
+    # It will create entry signals based on the information if the future gain will be high and the past is low.
+    # Exit signals are generated vice versa.
+    #
+    # The strategy was created using ```ETF_Finder_PastFutureGain_SignalGenForTraining.ipynb``` with these rules:
+    #
+    # FIRST_INDICATOR_NAME = "gt_past_gain"
+    # SECOND_INDICATOR_NAME = "gt_future_gain"
+    # THIRD_INDICATOR_NAME = "gt_past_gain_derivation"
+    # FOURTH_INDICATOR_NAME = "gt_future_gain_derivation"
+    #
+    # entrySignals = (tbl.loc[:,f'{FOURTH_INDICATOR_NAME}_previous'] > tbl.loc[:,f'{FOURTH_INDICATOR_NAME}']) & (tbl.loc[:,f'{FOURTH_INDICATOR_NAME}'] <= entryThr1) & (tbl.loc[:,f'{FOURTH_INDICATOR_NAME}'] >= -1.0 * entryThr1) & (tbl.loc[:,f'{SECOND_INDICATOR_NAME}'] >= entryThr2)
+    # exitSignals = (tbl.loc[:,f'{THIRD_INDICATOR_NAME}_previous'] > tbl.loc[:,f'{THIRD_INDICATOR_NAME}']) & (tbl.loc[:,f'{THIRD_INDICATOR_NAME}'] <= exitThr1) & (tbl.loc[:,f'{THIRD_INDICATOR_NAME}'] >= -1.0 * exitThr1) & (tbl.loc[:,f'{SECOND_INDICATOR_NAME}'] <= exitThr2)
+    #
+    Y_DATA_TYPE_PAST_FUTURE_GAIN_BASED_TRADE_SIGNALS = 4
+    PARAM_DICT_TEMPLATE_Y_DATA_TYPE_PAST_FUTURE_GAIN_BASED_TRADE_SIGNALS = {
+        "dataType": Y_DATA_TYPE_PAST_FUTURE_GAIN_BASED_TRADE_SIGNALS,
+        "gain_timespan": 60,
+        "direction_ma_timespan": 48,
+        "derivation_ma_timespan": 48,
+        "entryThr1": 0.005,
+        "entryThr2": 0.075,
+        "exitThr1": 0.050,
+        "exitThr2": 0.045
     }
 
     # Todo: Add y data type none to not init a generator
@@ -462,8 +488,8 @@ class YDataGenerator:
                 self.exit = (self.direction <= exit_thr1) & (
                     _direction_futureshifted <= exit_thr2)
 
-        # Data type Y_DATA_TYPE_PAST_FUTURE_GAIN
-        if self.Y_DATA_TYPE_PAST_FUTURE_GAIN == self.y_type_dict["dataType"]:
+        # Data type Y_DATA_TYPE_PAST_FUTURE_GAIN or Y_DATA_TYPE_PAST_FUTURE_GAIN_BASED_TRADE_SIGNALS
+        if self.Y_DATA_TYPE_PAST_FUTURE_GAIN == self.y_type_dict["dataType"] or self.Y_DATA_TYPE_PAST_FUTURE_GAIN_BASED_TRADE_SIGNALS == self.y_type_dict["dataType"]:
             # Check if all necessary values are present in the y-type descriptor dict
             necessary_values = [
                 "gain_timespan", "direction_ma_timespan", "derivation_ma_timespan"]
@@ -472,8 +498,17 @@ class YDataGenerator:
                     raise KeyError(
                         f"'{nev}' has to be defined in y-type descriptor dict")
 
+            # Some additional values are required for Y_DATA_TYPE_PAST_FUTURE_GAIN_BASED_TRADE_SIGNALS:
+            if self.Y_DATA_TYPE_PAST_FUTURE_GAIN_BASED_TRADE_SIGNALS == self.y_type_dict["dataType"]:
+                necessary_values = [
+                    "entryThr1", "entryThr2", "exitThr1", "exitThr2"]
+                for nev in necessary_values:
+                    if not nev in self.y_type_dict.keys():
+                        raise KeyError(
+                            f"'{nev}' has to be defined in y-type descriptor dict")
+
             # Get the values from the dict
-            gain_timespan = float(self.y_type_dict["gain_timespan"])
+            gain_timespan = int(self.y_type_dict["gain_timespan"])
             direction_ma_timespan = int(
                 self.y_type_dict["direction_ma_timespan"])
             derivation_ma_timespan = int(
@@ -522,11 +557,11 @@ class YDataGenerator:
                                                'max_future_gain'].values
 
             # Smooth the gain out and calculate its derivation
-            self.max_past_gain_ma, _, self.max_past_gain_dir, _ = self.calculateShiftedDerivations(
+            self.max_past_gain_ma, _, self.max_past_gain_derivation, _ = self.calculateShiftedDerivations(
                 max_past_gain,
                 direction_ma_timespan,
                 derivation_ma_timespan)
-            self.max_future_gain_ma, _, self.max_future_gain_dir, _ = self.calculateShiftedDerivations(
+            self.max_future_gain_ma, _, self.max_future_gain_derivation, _ = self.calculateShiftedDerivations(
                 max_future_gain,
                 direction_ma_timespan,
                 derivation_ma_timespan)
@@ -535,10 +570,35 @@ class YDataGenerator:
             self.max_past_gain_ma = np.nan_to_num(self.max_past_gain_ma, nan=0)
             self.max_future_gain_ma = np.nan_to_num(
                 self.max_future_gain_ma, nan=0)
-            self.max_past_gain_dir = np.nan_to_num(
-                self.max_past_gain_dir, nan=0)
-            self.max_future_gain_dir = np.nan_to_num(
-                self.max_future_gain_dir, nan=0)
+            self.max_past_gain_derivation = np.nan_to_num(
+                self.max_past_gain_derivation, nan=0)
+            self.max_future_gain_derivation = np.nan_to_num(
+                self.max_future_gain_derivation, nan=0)
+
+            # If the output shall be trade signals, calculate and store them
+            if self.Y_DATA_TYPE_PAST_FUTURE_GAIN_BASED_TRADE_SIGNALS == self.y_type_dict["dataType"]:
+                # The previous value is the orignal shifted one to the right
+                self.max_past_gain_derivation_previous = np.empty(
+                    self.max_past_gain_derivation.shape)
+                self.max_past_gain_derivation_previous[1:
+                                                       ] = self.max_past_gain_derivation[:-1]
+                self.max_past_gain_derivation_previous[0] = 0.0
+
+                self.max_future_gain_derivation_previous = np.empty(
+                    self.max_future_gain_derivation.shape)
+                self.max_future_gain_derivation_previous[1:
+                                                         ] = self.max_future_gain_derivation[:-1]
+                self.max_future_gain_derivation_previous[0] = 0.0
+
+                self.gain_based_entry_signals = (self.max_future_gain_derivation_previous > self.max_future_gain_derivation) & \
+                    (self.max_future_gain_derivation <= self.y_type_dict["entryThr1"]) & \
+                    (self.max_future_gain_derivation >= -1.0 * self.y_type_dict["entryThr1"]) & \
+                    (self.max_future_gain_ma >= self.y_type_dict["entryThr2"])
+
+                self.gain_based_exit_signals = (self.max_past_gain_derivation_previous > self.max_past_gain_derivation) & \
+                    (self.max_past_gain_derivation <= self.y_type_dict["exitThr1"]) & \
+                    (self.max_past_gain_derivation >= -1.0 * self.y_type_dict["exitThr1"]) & \
+                    (self.max_future_gain_ma <= self.y_type_dict["exitThr2"])
 
         # Delete the yDataDF DataFrame to save memory
         del self.yDataDF
@@ -629,13 +689,6 @@ class YDataGenerator:
         else:
             _local_slice_size = custom_slice_size
 
-        # Todo: Depending on Y type, not working for 2!
-        # Raise StopIteration if table is consumed
-        # if self.slice_start_index >= self.direction.shape[0]:
-        #     logging.info(
-        #         "Stop Iteration in Line 143 - Table consumed in y gen")
-        #     raise StopIteration
-
         # Prepare a return array, it is filled in the if statements depending on y type
         returnArray = None
 
@@ -695,31 +748,31 @@ class YDataGenerator:
                                                                   ])
                                                                   )
 
-            max_past_gain_dir_slice = self.__create_data_slice__(self.max_past_gain_dir,
-                                                                 self.batch_slice_start_index,
-                                                                 min([
-                                                                     self.max_past_gain_dir.shape[0], self.batch_slice_start_index +
-                                                                     _local_slice_size
-                                                                 ])
-                                                                 )
+            max_past_gain_derivation_slice = self.__create_data_slice__(self.max_past_gain_derivation,
+                                                                        self.batch_slice_start_index,
+                                                                        min([
+                                                                            self.max_past_gain_derivation.shape[0], self.batch_slice_start_index +
+                                                                            _local_slice_size
+                                                                        ])
+                                                                        )
 
-            max_future_gain_dir_slice = self.__create_data_slice__(self.max_future_gain_dir,
-                                                                   self.batch_slice_start_index,
-                                                                   min([
-                                                                       self.max_future_gain_dir.shape[0], self.batch_slice_start_index +
-                                                                       _local_slice_size
-                                                                   ])
-                                                                   )
+            max_future_gain_derivation_slice = self.__create_data_slice__(self.max_future_gain_derivation,
+                                                                          self.batch_slice_start_index,
+                                                                          min([
+                                                                              self.max_future_gain_derivation.shape[0], self.batch_slice_start_index +
+                                                                              _local_slice_size
+                                                                          ])
+                                                                          )
 
             gains = np.empty((max_past_gain_ma_slice.shape[0], 4))
 
             # Gain values
-            gains[:, 0] = np.tanh(max_past_gain_ma_slice)
-            gains[:, 1] = np.tanh(max_future_gain_ma_slice)
+            gains[:, 0] = max_past_gain_ma_slice
+            gains[:, 1] = max_future_gain_ma_slice
 
             # Gain derivation values
-            gains[:, 2] = np.tanh(max_past_gain_dir_slice)
-            gains[:, 3] = np.tanh(max_future_gain_dir_slice)
+            gains[:, 2] = max_past_gain_derivation_slice
+            gains[:, 3] = max_future_gain_derivation_slice
 
             returnArray = gains
 
@@ -736,6 +789,34 @@ class YDataGenerator:
                                                     self.batch_slice_start_index,
                                                     min([
                                                         self.exit.shape[0], self.batch_slice_start_index +
+                                                        _local_slice_size
+                                                    ])
+                                                    )
+
+            # Placeholder for neutral (-> No entry and no exit signal) to allow use of categorical crossentropy loss on ML training
+            neutral_slice = np.logical_not(
+                np.logical_or(entry_slice, exit_slice))
+
+            signals = np.empty((entry_slice.shape[0], 3))
+            signals[:, 0] = entry_slice
+            signals[:, 1] = exit_slice
+            signals[:, 2] = neutral_slice
+
+            returnArray = signals.astype(int)
+
+        elif self.Y_DATA_TYPE_PAST_FUTURE_GAIN_BASED_TRADE_SIGNALS == self.y_type_dict["dataType"]:
+            entry_slice = self.__create_data_slice__(self.gain_based_entry_signals,
+                                                     self.batch_slice_start_index,
+                                                     min([
+                                                         self.gain_based_entry_signals.shape[0], self.batch_slice_start_index +
+                                                         _local_slice_size
+                                                     ])
+                                                     )
+
+            exit_slice = self.__create_data_slice__(self.gain_based_exit_signals,
+                                                    self.batch_slice_start_index,
+                                                    min([
+                                                        self.gain_based_exit_signals.shape[0], self.batch_slice_start_index +
                                                         _local_slice_size
                                                     ])
                                                     )
