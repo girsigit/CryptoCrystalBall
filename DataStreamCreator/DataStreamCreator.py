@@ -532,7 +532,7 @@ class YDataGenerator:
                                                  1:future_index].loc[:, 'open'].values
 
                 # Get the 'current' price
-                current_price = self.yDataDF.iloc[i].values[0]
+                current_price = self.yDataDF.iloc[i].loc['open']
 
                 if 0 == past_slice.shape[0] or 0 == future_slice.shape[0]:
                     continue
