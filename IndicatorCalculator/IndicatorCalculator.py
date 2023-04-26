@@ -41,6 +41,8 @@ class IndicatorCalculator():
         self.LONGSPAN = longspan
         self.verbose = False
         self.dropna = False
+        # Some indicators are unstable depending on the start point of the tick DF. If it is shifted step by step, like in the real-time predictor, they give different results
+        self.calculateUnstableIndicators = False
 
         # Parse kwargs
         if "verbose" in kwargs.keys():
@@ -49,6 +51,9 @@ class IndicatorCalculator():
         if "dropna" in kwargs.keys():
             if True == kwargs["dropna"]:
                 self.dropna = True
+        if "calculateUnstableIndicators" in kwargs.keys():
+            if True == kwargs["calculateUnstableIndicators"]:
+                self.calculateUnstableIndicators = True
 
     def CreateAllIndicatorsTable(self, sourceTable: pd.DataFrame, **kwargs):
         '''
@@ -106,10 +111,14 @@ class IndicatorCalculator():
                     columnsToDrop.pop(), axis=1, inplace=True)
 
         # Calculate non-period-sensitive indicators
-        concTableRaw = pd.concat([
-            cleanSourceTable,
-            self.CalcCycTable(cleanSourceTable)
-        ], axis=1)
+        # Attention: They are unstable indicators (depening on the initial price values in the table)
+        if self.calculateUnstableIndicators:
+            concTableRaw = pd.concat([
+                cleanSourceTable,
+                self.CalcCycTable(cleanSourceTable)
+            ], axis=1)
+        else:
+            concTableRaw = cleanSourceTable
 
         # Calculate period-sensitive indicators for each timespan
         for timeSpan in [self.SHORTSPAN, self.MIDSPAN, self.LONGSPAN]:
@@ -173,7 +182,10 @@ class IndicatorCalculator():
 
         # Fixed period indicators
         # Todo: Change to dynamic periods
-        overlapTable['c_HT_TRENDLINE'] = talib.HT_TRENDLINE(close)
+
+        # HT_TRENDLINE is an unstable indicator
+        if self.calculateUnstableIndicators:
+            overlapTable['c_HT_TRENDLINE'] = talib.HT_TRENDLINE(close)
         overlapTable['c_SAR_0005_005'] = talib.SAR(
             high, low, acceleration=0.005, maximum=0.05)
         overlapTable['c_SAR_002_02'] = talib.SAR(
@@ -189,8 +201,10 @@ class IndicatorCalculator():
         overlapTable['c_BolM{}'.format(timeSpan)] = _bolmshort
         overlapTable['c_BolL{}'.format(timeSpan)] = _bollshort
 
-        overlapTable['c_DEMA{}'.format(timeSpan)] = talib.DEMA(
-            close, timeperiod=timeSpan)
+        # DEMA is an unstable indicator
+        if self.calculateUnstableIndicators:
+            overlapTable['c_DEMA{}'.format(timeSpan)] = talib.DEMA(
+                close, timeperiod=timeSpan)
         overlapTable['c_EMA{}'.format(timeSpan)] = talib.EMA(
             close, timeperiod=timeSpan)
         overlapTable['c_KAMA{}'.format(timeSpan)] = talib.KAMA(
@@ -201,8 +215,11 @@ class IndicatorCalculator():
             close, timeperiod=timeSpan)
         overlapTable['c_SMA{}'.format(timeSpan)] = talib.SMA(
             close, timeperiod=timeSpan)
-        overlapTable['c_TEMA{}'.format(timeSpan)] = talib.TEMA(
-            close, timeperiod=timeSpan)
+
+        # TEMA is an unstable indicator
+        if self.calculateUnstableIndicators:
+            overlapTable['c_TEMA{}'.format(timeSpan)] = talib.TEMA(
+                close, timeperiod=timeSpan)
         overlapTable['c_TRIMA{}'.format(timeSpan)] = talib.TRIMA(
             close, timeperiod=timeSpan)
         overlapTable['c_WMA{}'.format(timeSpan)] = talib.WMA(
@@ -284,26 +301,40 @@ class IndicatorCalculator():
         # macd, macdsignal, macdhist = MACDFIX(close, signalperiod=9)
 
         # Dynamic period indicators
-        momentumTable['ADX{}'.format(timeSpan)] = talib.ADX(
-            high, low, close, timeperiod=timeSpan)
-        momentumTable['ADXR{}'.format(timeSpan)] = talib.ADXR(
-            high, low, close, timeperiod=timeSpan)
+        # ADXR is an unstable indicator
+        if self.calculateUnstableIndicators:
+            momentumTable['ADX{}'.format(timeSpan)] = talib.ADX(
+                high, low, close, timeperiod=timeSpan)
+        # ADXR is an unstable indicator
+        if self.calculateUnstableIndicators:
+            momentumTable['ADXR{}'.format(timeSpan)] = talib.ADXR(
+                high, low, close, timeperiod=timeSpan)
         momentumTable['AROONOSC{}'.format(timeSpan)] = talib.AROONOSC(
             high, low, timeperiod=timeSpan)
         momentumTable['CCI{}'.format(timeSpan)] = talib.CCI(
             high, low, close, timeperiod=timeSpan)
-        momentumTable['CMO{}'.format(timeSpan)] = talib.CMO(
-            close, timeperiod=timeSpan)
-        momentumTable['DX{}'.format(timeSpan)] = talib.DX(
-            high, low, close, timeperiod=timeSpan)
-        momentumTable['MINUS_DI{}'.format(timeSpan)] = talib.MINUS_DI(
-            high, low, close, timeperiod=timeSpan)
-        momentumTable['PLUS_DI{}'.format(timeSpan)] = talib.PLUS_DI(
-            high, low, close, timeperiod=timeSpan)
-        momentumTable['MINUS_DM{}'.format(timeSpan)] = talib.MINUS_DM(
-            high, low, timeperiod=timeSpan)
-        momentumTable['PLUS_DM{}'.format(timeSpan)] = talib.PLUS_DM(
-            high, low, timeperiod=timeSpan)
+        
+        # CMO is an unstable indicator
+        if self.calculateUnstableIndicators:
+            momentumTable['CMO{}'.format(timeSpan)] = talib.CMO(
+                close, timeperiod=timeSpan)
+        
+        # DX is an unstable indicator
+        if self.calculateUnstableIndicators:
+            momentumTable['DX{}'.format(timeSpan)] = talib.DX(
+                high, low, close, timeperiod=timeSpan)
+        
+        # DI/DM is an unstable indicator
+        if self.calculateUnstableIndicators:
+            momentumTable['MINUS_DI{}'.format(timeSpan)] = talib.MINUS_DI(
+                high, low, close, timeperiod=timeSpan)
+            momentumTable['PLUS_DI{}'.format(timeSpan)] = talib.PLUS_DI(
+                high, low, close, timeperiod=timeSpan)
+            momentumTable['MINUS_DM{}'.format(timeSpan)] = talib.MINUS_DM(
+                high, low, timeperiod=timeSpan)
+            momentumTable['PLUS_DM{}'.format(timeSpan)] = talib.PLUS_DM(
+                high, low, timeperiod=timeSpan)
+        
         momentumTable['MOM{}'.format(timeSpan)] = talib.MOM(
             close, timeperiod=timeSpan)
         momentumTable['ROC{}'.format(timeSpan)] = talib.ROC(
@@ -312,10 +343,16 @@ class IndicatorCalculator():
             close, timeperiod=timeSpan)
         momentumTable['ROCR{}'.format(timeSpan)] = talib.ROCR(
             close, timeperiod=timeSpan)
-        momentumTable['RSI{}'.format(timeSpan)] = talib.RSI(
-            close, timeperiod=timeSpan)
-        momentumTable['TRIX{}'.format(timeSpan)] = talib.TRIX(
-            close, timeperiod=timeSpan)
+        
+        # RSI is an unstable indicator
+        if self.calculateUnstableIndicators:
+            momentumTable['RSI{}'.format(timeSpan)] = talib.RSI(
+                close, timeperiod=timeSpan)
+        # TRIX is an unstable indicator
+        if self.calculateUnstableIndicators:
+            momentumTable['TRIX{}'.format(timeSpan)] = talib.TRIX(
+                close, timeperiod=timeSpan)
+        
         momentumTable['WILLR{}'.format(timeSpan)] = talib.WILLR(
             high, low, close, timeperiod=timeSpan)
         aroondownshort, aroonupshort = talib.AROON(
