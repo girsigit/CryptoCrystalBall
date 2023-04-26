@@ -139,3 +139,19 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Ignore the bigdata folder --> This should be synced with google buckets
+*/bigdata
+
+# Ignore the dataset folder --> This should be synced with google buckets
+*/dataset
+
+# Ignore the libcudnn setup files --> This should be synced with google buckets
+libcudnn*.deb
+
+**/tickdata/*
+**/logs/*
+
+# Optimizer checkpoints
+c.pickle
+w.pickle
