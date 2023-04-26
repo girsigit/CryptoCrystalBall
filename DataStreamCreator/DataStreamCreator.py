@@ -41,6 +41,10 @@ class XBlockGenerator:
     If the tick data is in hours and `X_lookback_cnt=12`, the generator would return slices of 12 hours.
     The step size between the X-blocks is 1, so the resulting DFs in the example would be: 00:00-11:00, 01:00-12:00, 02:00-13:00, ...
 
+    Important: If you want to create one X-Block, e.g. for predicting on live data, you have to feed a `tick_and_indicator_DF` with one more row,
+    as the latest row is ignored. This is due to the circumstance that in a live environment the latest tick would change during the day, and therefore
+    cannot be used. --> If you want a 128-timesteps X-Block, you have to feed 129 `tick_and_indicator_DF`-rows.
+
     Requried constructor arguments:
     - `tick_and_indicator_DF`: An `pd.DataFrame` containing a time series of tick and indicator data. This table is normally created using the `IndicatorCalculator` class.
     - `generator_batch_size`: An `int` variable defining how many X-Blocks the generator shall return on each next() call.
@@ -62,6 +66,9 @@ class XBlockGenerator:
         # Create a save copy of the input table
         self.tick_and_indicator_DF = copy.deepcopy(tick_and_indicator_DF)
 
+        logging.debug(f"XBlockGenerator, __init__, tick_and_indicator_DF first index: {tick_and_indicator_DF.index[0]}")
+        logging.debug(f"XBlockGenerator, __init__, tick_and_indicator_DF last index: {tick_and_indicator_DF.index[-1]}")
+
         # At the end of the initializer, the tick and indicator values are stored as np.array instead of a pd.DataFrame to improve speed
         self.tick_and_indicator_values = None
 
@@ -78,6 +85,7 @@ class XBlockGenerator:
 
         # Attention: The value of self.slice_start_index changes during iteration, self.X_Block_lenght does not
         self.slice_start_index = X_Block_lenght
+        logging.debug(f"XBlockGenerator, __init__, self.slice_start_index: {self.slice_start_index}")
 
         # This variable is used in the block-gen for loop as a 'class-global' count variable, to preseve the position in the data array.
         self.block_end_index: int = 0
@@ -118,6 +126,10 @@ class XBlockGenerator:
         # Extract the values as np.array and delete the table to save memory
         self.tick_and_indicator_values = copy.deepcopy(
             self.tick_and_indicator_DF.values)
+        
+        logging.debug(f"XBlockGenerator, __init__, tick_and_indicator_DF first index at the end: {tick_and_indicator_DF.index[0]}")
+        logging.debug(f"XBlockGenerator, __init__, tick_and_indicator_DF last index at the end: {tick_and_indicator_DF.index[-1]}")
+
         del self.tick_and_indicator_DF
         gc.collect()
 
@@ -178,10 +190,16 @@ class XBlockGenerator:
         # A count variable for the current position in the data_X array
         data_X_position = 0
 
+        logging.debug(f"XBlockGenerator, __create_block__, self.slice_start_index: {self.slice_start_index}")
+        logging.debug(f"XBlockGenerator, __create_block__, self.tick_and_indicator_values.shape: {self.tick_and_indicator_values.shape}")
+
         # Important: This for loop uses a 'class-global' count variable, as the loop is exited if the
         # desired amount of blocks has been generated, but it shall start at the next call again at self.block_end_index
         # It is increased by 1 every loop, so that every timestamp/row has the chance to be the latest in the block
         for self.block_end_index in range(self.slice_start_index, self.tick_and_indicator_values.shape[0]):
+
+            logging.debug(f"self.block_end_index-self.X_Block_lenght: {self.block_end_index-self.X_Block_lenght}")
+            logging.debug(f"self.block_end_index: {self.block_end_index}")
 
             # Pick a block-sized slice from the data array
             new_block = copy.deepcopy(
@@ -995,10 +1013,16 @@ class FileListToDataStream:
     def __initGenerators__(self, filePath):
         tickDF = pd.read_csv(filePath, encoding="utf-8",
                              header=0, index_col='startsAt')
+        
+        tickDF.sort_index(inplace=True)
+
+        logging.debug(f"FileListToDataStream, __initGenerators__: tickDF.shape: {tickDF.shape}")
 
         # Todo: If no V column then exclude these indicators
         tickAndIndicatorDF = self.indicatorCalculator.CreateAllIndicatorsTable(
             tickDF, **self.kwargs)
+        
+        logging.debug(f"FileListToDataStream, __initGenerators__: tickAndIndicatorDF.shape: {tickAndIndicatorDF.shape}")
 
         # If price related norming is necessary, do it, otherwise just pass the tickAndIndicatorDF table
         if True == self.norm_price_related_indicators:
@@ -1006,6 +1030,9 @@ class FileListToDataStream:
                 tickAndIndicatorDF, **self.kwargs)
         else:
             normedDF = tickAndIndicatorDF
+
+        logging.debug(f"FileListToDataStream, __initGenerators__: normedDF.shape: {normedDF.shape}")
+        logging.debug(f"FileListToDataStream, __initGenerators__: self.batch_size_generator: {self.batch_size_generator}")
 
         # Init the X block generator
         XGen = XBlockGenerator(
@@ -1041,6 +1068,9 @@ class FileListToDataStream:
                     # Get slices of data from the generators
                     X_slice_from_gen = next(self.X_generators[i])
                     y_slice_from_gen = next(self.y_generators[i])
+
+                    logging.debug(f"FileListToDataStream, __next__: X_slice_from_gen.shape: {X_slice_from_gen.shape}")
+                    logging.debug(f"FileListToDataStream, __next__: y_slice_from_gen.shape: {y_slice_from_gen.shape}")                    
 
                 except StopIteration:
                     # If the generator stop internally for some reason, a new generator shall be created
@@ -1131,7 +1161,7 @@ class FileListToDataStream:
                     except StopIteration:
                         # If a StopIteration occurs on
 
-                        logging.warning(
+                        logging.info(
                             f"Caught StopIteration in filling missing values for '{fileName}', starting with completely new batch blocks")
 
                         # If the file list is empty, stop the whole process
@@ -1162,14 +1192,17 @@ class FileListToDataStream:
 
                                 break
                             except StopIteration:
-                                logging.warning(
+                                logging.info(
                                     f"Getting completely new slices failed on attempt {attempt} with file '{fileName}', trying again..")
                                 if 10 == attempt:
                                     logging.error(
                                         f"Maximum attempts ({attempt}) for getting completely new slices reached, stopping!")
 
                 # Ensure that the time-dimension of X and y has the same size
-                assert X_slice_from_gen.shape[0] == y_slice_from_gen.shape[0]
+                if not X_slice_from_gen.shape[0] == y_slice_from_gen.shape[0]:
+                    logging.error(f"X_slice_from_gen.shape[0]: {X_slice_from_gen.shape[0]}")
+                    logging.error(f"y_slice_from_gen.shape[0]: {y_slice_from_gen.shape[0]}")
+                    assert X_slice_from_gen.shape[0] == y_slice_from_gen.shape[0]
 
                 # If it is the first generator, the X and y batch data is None, so replace it
                 if batch_X_data is None:
