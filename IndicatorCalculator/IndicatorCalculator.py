@@ -12,6 +12,7 @@ import pandas as pd
 import numpy as np
 import talib
 import copy
+import logging
 
 
 class IndicatorCalculator():
@@ -96,6 +97,9 @@ class IndicatorCalculator():
         # Check if columns have to be dropped
         cleanSourceTable = sourceTable
 
+        logging.debug(
+            f"IndicatorCalculator cleanSourceTable.shape: {cleanSourceTable.shape}")
+
         if True == dropNonOHLCVinputColumns:
             ALLOWED_COLUMNS = ['open', 'high', 'low', 'close', 'volume']
             columnsToDrop = []
@@ -110,6 +114,9 @@ class IndicatorCalculator():
                 cleanSourceTable.drop(
                     columnsToDrop.pop(), axis=1, inplace=True)
 
+        logging.debug(
+            f"IndicatorCalculator cleanSourceTable.shape after dropNonOHLCVinputColumns: {cleanSourceTable.shape}")
+
         # Calculate non-period-sensitive indicators
         # Attention: They are unstable indicators (depening on the initial price values in the table)
         if self.calculateUnstableIndicators:
@@ -120,29 +127,59 @@ class IndicatorCalculator():
         else:
             concTableRaw = cleanSourceTable
 
+        logging.debug(
+            f"IndicatorCalculator concTableRaw.shape after non-period-sensitive indicators: {concTableRaw.shape}")
+
         # Calculate period-sensitive indicators for each timespan
         for timeSpan in [self.SHORTSPAN, self.MIDSPAN, self.LONGSPAN]:
             # Join the new indicators into the table
             # This cannot be done using pd.concat, as some timespan-insensitve columns would be double
-            concTableRaw = concTableRaw.join(self.CalcOverlapTable(
-                cleanSourceTable, timeSpan), rsuffix="_dropMe")
+            ovDF = self.CalcOverlapTable(cleanSourceTable, timeSpan)
+            concTableRaw = concTableRaw.join(ovDF, rsuffix="_dropMe")
+
+            logging.debug(
+                f"IndicatorCalculator ovDF.shape after CalcOverlapTable timeSpan {timeSpan}: {ovDF.shape}")
+            logging.debug(
+                f"IndicatorCalculator ovDF[0] after CalcOverlapTable timeSpan {timeSpan}: {ovDF.index[0]}")
+            logging.debug(
+                f"IndicatorCalculator ovDF[-1] after CalcOverlapTable timeSpan {timeSpan}: {ovDF.index[-1]}")
+            logging.debug(
+                f"IndicatorCalculator concTableRaw.shape after CalcOverlapTable timeSpan {timeSpan} before drop: {concTableRaw.shape}")
+
+            # concTableRaw = concTableRaw.join(self.CalcOverlapTable(
+            #     cleanSourceTable, timeSpan), rsuffix="_dropMe")
             concTableRaw = concTableRaw.drop(
                 concTableRaw.filter(regex='_dropMe').columns, axis=1)
+
+            logging.debug(
+                f"IndicatorCalculator concTableRaw.shape after CalcOverlapTable timeSpan {timeSpan}: {concTableRaw.shape}")
 
             concTableRaw = concTableRaw.join(self.CalcMomentumTable(
                 cleanSourceTable, timeSpan), rsuffix="_dropMe")
             concTableRaw = concTableRaw.drop(
                 concTableRaw.filter(regex='_dropMe').columns, axis=1)
 
+            logging.debug(
+                f"IndicatorCalculator concTableRaw.shape after CalcMomentumTable timeSpan {timeSpan}: {concTableRaw.shape}")
+
             concTableRaw = concTableRaw.join(self.CalcVolyTable(
                 cleanSourceTable, timeSpan), rsuffix="_dropMe")
             concTableRaw = concTableRaw.drop(
                 concTableRaw.filter(regex='_dropMe').columns, axis=1)
 
+            logging.debug(
+                f"IndicatorCalculator concTableRaw.shape after CalcVolyTable timeSpan {timeSpan}: {concTableRaw.shape}")
+
             concTableRaw = concTableRaw.join(self.CalcStatTable(
                 cleanSourceTable, timeSpan), rsuffix="_dropMe")
             concTableRaw = concTableRaw.drop(
                 concTableRaw.filter(regex='_dropMe').columns, axis=1)
+
+            logging.debug(
+                f"IndicatorCalculator concTableRaw.shape after CalcStatTable timeSpan {timeSpan}: {concTableRaw.shape}")
+
+        logging.debug(
+            f"IndicatorCalculator concTableRaw.shape after period-sensitive indicators: {concTableRaw.shape}")
 
         # Add volume indicators
         if ("volume" in cleanSourceTable.columns and True == calcVolumeInidators):
@@ -313,17 +350,17 @@ class IndicatorCalculator():
             high, low, timeperiod=timeSpan)
         momentumTable['CCI{}'.format(timeSpan)] = talib.CCI(
             high, low, close, timeperiod=timeSpan)
-        
+
         # CMO is an unstable indicator
         if self.calculateUnstableIndicators:
             momentumTable['CMO{}'.format(timeSpan)] = talib.CMO(
                 close, timeperiod=timeSpan)
-        
+
         # DX is an unstable indicator
         if self.calculateUnstableIndicators:
             momentumTable['DX{}'.format(timeSpan)] = talib.DX(
                 high, low, close, timeperiod=timeSpan)
-        
+
         # DI/DM is an unstable indicator
         if self.calculateUnstableIndicators:
             momentumTable['MINUS_DI{}'.format(timeSpan)] = talib.MINUS_DI(
@@ -334,7 +371,7 @@ class IndicatorCalculator():
                 high, low, timeperiod=timeSpan)
             momentumTable['PLUS_DM{}'.format(timeSpan)] = talib.PLUS_DM(
                 high, low, timeperiod=timeSpan)
-        
+
         momentumTable['MOM{}'.format(timeSpan)] = talib.MOM(
             close, timeperiod=timeSpan)
         momentumTable['ROC{}'.format(timeSpan)] = talib.ROC(
@@ -343,7 +380,7 @@ class IndicatorCalculator():
             close, timeperiod=timeSpan)
         momentumTable['ROCR{}'.format(timeSpan)] = talib.ROCR(
             close, timeperiod=timeSpan)
-        
+
         # RSI is an unstable indicator
         if self.calculateUnstableIndicators:
             momentumTable['RSI{}'.format(timeSpan)] = talib.RSI(
@@ -352,7 +389,7 @@ class IndicatorCalculator():
         if self.calculateUnstableIndicators:
             momentumTable['TRIX{}'.format(timeSpan)] = talib.TRIX(
                 close, timeperiod=timeSpan)
-        
+
         momentumTable['WILLR{}'.format(timeSpan)] = talib.WILLR(
             high, low, close, timeperiod=timeSpan)
         aroondownshort, aroonupshort = talib.AROON(
